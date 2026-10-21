@@ -12,7 +12,7 @@ SellBridge 公式の Claude Code プラグインのマーケットプレイス�
 
 ## 必要なもの
 
-- SellBridge のアカウント（有料プラン）。無料プランでは MCP のツールがすべて拒否されます
+- SellBridge のアカウント。一部のツールはご契約プランによって使えない場合があります（プランごとの対応は確認中です）
 - Claude Code（Claude デスクトップアプリの「Code」タブ、または CLI）
 
 ## インストール
@@ -33,7 +33,7 @@ Claude Code で次のコマンドを入力します。
 /plugin install sell-bridge@sell-bridge
 ```
 
-Claude Code 2.1.275 以降なら、手順 1 と 2 を次の 1 行でまとめて行えます。
+手順 1 と 2 は次の 1 行でまとめて行える場合があります（対応バージョンは確認中です。動かないときは手順 1 と 2 を順に実行してください）。
 
 ```
 /plugin install sell-bridge --marketplace darumad-inc/sell-bridge-claude-plugins
@@ -45,7 +45,7 @@ Claude Code 2.1.275 以降なら、手順 1 と 2 を次の 1 行でまとめて
 
 インストール後、SellBridge のツールを初めて使うときに、ブラウザで SellBridge のログインと連携の許可を求められます。画面の指示に従って許可してください。
 
-ログイン画面が開かない場合は、`/mcp` を入力し、一覧から `plugin:sell-bridge:sell-bridge` を選んで認証してください。
+ログイン画面が開かない場合は、`/mcp` を入力し、一覧から SellBridge のサーバーを選んで認証してください（一覧での表示名は確認中です）。
 
 ## 更新
 
