@@ -8,6 +8,7 @@
     "url": "https://sell-bridge.com"
   },
   "homepage": "https://help.sell-bridge.com/guides/list-with-claude",
+  "privacyPolicyUrl": "https://sell-bridge.com/privacy",
   "repository": "https://github.com/darumad-inc/sell-bridge-claude-plugins",
   "keywords": [
     "shopee",
