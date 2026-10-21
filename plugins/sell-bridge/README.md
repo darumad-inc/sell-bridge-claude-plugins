@@ -22,7 +22,7 @@ claude.ai のチャット（ブラウザ・デスクトップアプリ）、Cowo
 4. Claude が画像の確認、コンプライアンス、カテゴリと必須属性、各国語の商品名と説明、SellBridge の事前チェック（価格の計算を含む）を行い、ストアごとに出品を作ります。
 5. 完了報告で、ストアごとの商品番号・価格・見送ったストアと理由・割引に入れる商品・在庫監視の状態を確かめ、内容を確認してから自分で公開します。
 
-詳しい手順は [Claude と会話して Shopee に出品する](https://help.sell-bridge.com/guides/list-with-claude) をご覧ください。
+詳しい手順は [Claude と会話して Shopee に出品する](https://help.sell-bridge.com/guides/list-with-claude) をご覧ください（ヘルプセンターは SellBridge へのログインが必要です）。
 
 ## 注意
 
