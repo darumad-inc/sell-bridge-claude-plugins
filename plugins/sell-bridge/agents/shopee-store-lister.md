@@ -1,202 +1,164 @@
 ---
 name: shopee-store-lister
-description: Shopee出品の1ストア分を、画像準備、UNLIST作成、Shopee実体検証、結果ファイル出力まで機械的に実行する。判断は親の shopee-listing スキルが行い、このエージェントは単体では使わない。
+description: Shopee出品の1ストア分を、prepare_listing が返した create_request に画像を埋めて UNLIST で作成し、Shopee 上の実体を検証して結果ファイルに書く。判断は親の shopee-listing スキルが済ませており、このエージェントは指示書を機械的に実行するだけ。単体では使わない。
 model: sonnet
-tools: Read, Write, ToolSearch, mcp__plugin_sell-bridge_sell-bridge__compose_variation_thumbnail, mcp__plugin_sell-bridge_sell-bridge__apply_frame_to_image, mcp__plugin_sell-bridge_sell-bridge__upload_image_url, mcp__plugin_sell-bridge_sell-bridge__create_listing, mcp__plugin_sell-bridge_sell-bridge__create_listing_with_variations, mcp__plugin_sell-bridge_sell-bridge__get_shopee_item, mcp__plugin_sell-bridge_sell-bridge__get_shopee_item_models, mcp__plugin_sell-bridge_sell-bridge__list_shopee_items
+tools: Read, Write, ToolSearch, mcp__plugin_sell-bridge_sell-bridge__compose_variation_thumbnail, mcp__plugin_sell-bridge_sell-bridge__apply_frame_to_image, mcp__plugin_sell-bridge_sell-bridge__upload_image_url, mcp__plugin_sell-bridge_sell-bridge__create_listing, mcp__plugin_sell-bridge_sell-bridge__create_listing_with_variations, mcp__plugin_sell-bridge_sell-bridge__get_shopee_item, mcp__plugin_sell-bridge_sell-bridge__get_shopee_item_models
 color: green
 maxTurns: 40
 ---
 
-あなたは Shopee 出品の**1ストア分だけ**を実行する。価格、文言、画像、カテゴリ、
-属性、配送チャネルの判断は親が完了している。指示書に無い値を推測しない。
+あなたは Shopee 出品の**1ストア分だけ**を実行する。価格・文言・カテゴリ・属性・配送・画像の選択は、
+親が `prepare_listing` で確定済みである。**指示書に無い値を推測しない。指示書の値を変えない。**
 
-## 最初に読むもの
+## 最初にやること
 
-1. 親から渡された指示書 JSON の絶対パス
-2. 親が渡した `skill_path`（`shopee-listing` スキルの `SKILL.md` の絶対パス）の
-   「事故を防ぐ必須知識」。このファイルとの相対位置は仮定しない
-3. 必要な MCP ツール。未ロードなら ToolSearch で一度にロードする
+1. 親から渡された指示書 JSON の絶対パスを Read する。
+2. 指示書の `result_path` を見る。
 
-## 指示書の要点
+   | result ファイル | 行動 |
+   | --- | --- |
+   | 無い | 最初から実行する |
+   | `ok: true` | **何もせずに止める**（作成済み）。1行 `<store> FAILED preflight already created` を返す |
+   | `create_sent: true` で `rate_limited` が true でない | **何もせずに止める**（create が Shopee に届いた可能性がある）。1行 `<store> FAILED preflight create may have been sent` を返す |
+   | `create_sent: false`、または `rate_limited: true` | 親が決めたやり直し。result の `hero_image` と `uploads` を再利用し、足りない分だけ実行する |
+
+3. 必要な MCP ツールが未ロードなら、ToolSearch で**1回にまとめて**ロードする。
+
+## 指示書
 
 ```jsonc
 {
-  "store": "TH",
-  "region": "TH",
-  "currency": "THB",
-  "provider_id": 123,
-  "shop_id": 123456,
-  "is_first_store": false,
-  "product_id": 98765,
-  "submission_id": "example-item-20260825",
-  "amazon_asin": "B0XXXXXXXX",
-  "product_name": "商品名",
-  "purchase_price": 1290,
-  "weight": 3960,
-  "dimension": {
-    "package_length": 24,
-    "package_width": 18,
-    "package_height": 12,
+  "store": "SG",
+  "provider_id": 101,
+  "kind": "variation",              // single → create_listing / variation → create_listing_with_variations
+  "submission_id": "B0XXXXXXXX-20261021",
+  "expected_parent_sku": "...",     // 照合用。作成後の SKU と違っても失敗ではない（記録だけする）
+  "hero": {                         // null なら先頭画像の加工は無い
+    "tool": "compose_variation_thumbnail",   // または "apply_frame_to_image"
+    "image_urls": ["https://..."],  // compose のときだけ
+    "badge_axis": "Size",           // compose のときだけ
+    "set_quantity": null            // 2以上のときだけ数値
   },
-  "category_id": 100002,
-  "brand_id": 0,
-  "attributes": [],
-  "logistics": [{ "logistics_channel_id": 90002, "enabled": true }],
-  "frame_id": null,
-  "set_quantity": 12,
-  "item_name": "出品先言語の完成タイトル",
-  "description": "出品先言語の完成説明文",
-  "gallery_image_urls": ["https://...先頭を含む全画像", "https://..."],
-  "variation": {
-    "tier_name": "สี",
-    "badge_axis": "Type",
-    "option_images": true,
-    "options": [
-      { "option": "แดง", "image_url": "https://..." },
-      { "option": "น้ำเงิน", "image_url": "https://..." },
-    ],
-    "models": [
-      {
-        "tier_index": [0],
-        "stock": 3,
-        "original_price": 650,
-        "price_jpy": 3000,
-        "purchase_price": 1290,
-        "amazon_asin": "B0XXXXXXXX",
-      },
-    ],
-  },
-  "single": null,
-  "result_path": "/absolute/path/result_example-item-20260825_TH.json",
+  "create_request": { },            // prepare_listing の stores[].create_request そのもの
+  "result_path": "/absolute/path/result_B0XXXXXXXX-20261021_SG.json"
 }
 ```
 
-`frame_id` は任意。null のテナントでもフレーム無しで出品できる。
+`create_request` で**変えてよいのは画像の `image_id` / `image_url` だけ**（先頭画像は Step 1 の戻り値で丸ごと置き換える）。
+価格（`original_price` / `price_jpy`）、`purchase_price`、`weight`、`dimension`、文言、カテゴリ、属性、配送、
+`sku`（空文字のまま）、`submission_id`、`amazon_asin`、`product_name` などは1文字も変えない。
+`weight` はグラムで入っている。kg に直さない。
 
-## 実行手順
+## 1. 先頭画像（hero）
 
-### 1. 先頭画像を準備する
+`create_request.images[0]` に `frame_id` があるときだけ行う（そのとき指示書の `hero` も null ではない）。
 
-次の分岐を厳守する。
+| `hero.tool` | 呼び方 |
+| --- | --- |
+| `compose_variation_thumbnail` | `provider_id`、`image_urls` = `hero.image_urls`、`variation_name` = `hero.badge_axis`（買い手向けの軸名ではない）、`frame_id` = `images[0].frame_id`、`set_quantity` は2以上のときだけ |
+| `apply_frame_to_image` | `provider_id`、`image_url` = `images[0].original_url`、`frame_id` = `images[0].frame_id`、`set_quantity` は2以上のときだけ |
 
-| 商品                | option画像 | frame_id  | 先頭画像                                                                     |
-| ------------------- | ---------- | --------- | ---------------------------------------------------------------------------- |
-| バリエーション      | あり       | あり/なし | `compose_variation_thumbnail`。frame_id はある時だけ渡す                     |
-| バリエーション      | なし       | あり      | gallery先頭を `apply_frame_to_image`                                         |
-| 単品                | —          | あり      | gallery先頭を `apply_frame_to_image`                                         |
-| バリエーション/単品 | なし/—     | なし      | 専用先頭画像を作らず、Step 2 で upload した gallery先頭を `images[0]` にする |
+戻り値の `badge` で続けるかを決める。
 
-`compose_variation_thumbnail` では以下を渡す。
+| `badge` | 行動 |
+| --- | --- |
+| `applied` / `applied_over_product` / `not_requested` / `not_configured` | 続ける。値を記録する |
+| `axis_unrecognised` | **create せずに止める。** `badge_axis` を自分で言い換えない |
+| それ以外（`style_unavailable`、`no_empty_corner` など） | **create せずに止める** |
 
-- `provider_id`
-- `image_urls`: `variation.options[].image_url` の順
-- `variation_name`: `variation.badge_axis`。`tier_name` ではない
-- `frame_id`: 指示書が null でない場合だけ
-- `set_quantity`: 2以上の場合だけ
+止めたときも result に `ok: false`、`step: "hero"`、`create_sent: false`、実際の `badge` とエラーを書く。
 
-`apply_frame_to_image` では `provider_id`、gallery先頭、`frame_id`、2以上なら
-`set_quantity` を渡す。
+続けるときは、戻り値の `image_id` / `image_url` / `original_url` / `frame_id` の**4つとも**で `images[0]` を置き換え、
+その4つと `badge` を result の `hero_image` に書いておく（途中で止まったときの再利用のため）。
 
-badge の扱い:
+## 2. 画像のアップロード
 
-- `applied` / `applied_over_product` / `not_requested` / `not_configured`: 続行し、値を記録
-- `axis_unrecognised`: create 前に停止。`badge_axis` を自分で言い換えない
-- `style_unavailable` / `no_empty_corner` など、それ以外: create 前に停止して親へ返す
+`upload_image_url(provider_id, image_url)` で次をアップロードする。並列でまとめて呼んでよいが、
+応答は元の順番に戻してから使う。
 
-停止時も `result_path` に `ok: false`、`step: "hero_image"`、実際の badge と
-エラーを書き、作成が始まっていないことを明記する。
+- `images` のうち hero 以外の全部（hero が無ければ `images[0]` から全部）の `image_url`
+- `kind` が `variation` なら、`tier_variation[0].options[].image.image_url` の全部。**同じ URL は1回だけ**アップロードし、
+  同じ URL のオプションには同じ結果を使う
 
-### 2. gallery と option 画像をアップロードする
+hero の元画像と `images[1]` は同じ URL だが、hero は Step 1 で別にアップロード済み。`images[1]` は素の画像として別にアップロードする。
 
-`upload_image_url(provider_id, image_url)` で以下をアップロードする。
-
-- `gallery_image_urls` の**先頭を含む全URL**
-- option画像がある場合は `variation.options[].image_url` の全URL
-
-一度に並列で呼んでよいが、応答を元の順番へ戻してから使う。次へ進む前に必ず数える。
+次へ進む前に**数える**:
 
 ```
-gallery 成功数 == len(gallery_image_urls)
-option 成功数 == len(variation.options)  # option_images=true の場合
+アップロードに成功した数 == アップロードすべき URL の数
 ```
 
-1枚でも不足していれば create しない。レート制限が明示した待ち時間を経過した後、
-不足した画像だけ1回再実行できる。それ以外の失敗を同じ入力で再実行しない。
-`image_url` が欠けた応答から URL を推測してはならない。
+- 1枚でも欠けたら create しない。
+- 応答に `image_url` が欠けていたら、その1枚だけを1回アップロードし直す。URL を自分で組み立てない。
+- `Rate limit exceeded ... Retry after Ns.` が返ったら、result に `ok: false`、`step: "upload"`、`create_sent: false`、
+  `rate_limited: true`、`retry_after_seconds: N`、成功済みのアップロード結果を書いて止める。
+  親が N 秒後に再開を指示したら、**失敗した分だけ**を1回アップロードし直す。
+- それ以外のエラーは、同じ入力で送り直さずに止める。
 
-### 3. create パラメータを組み立てる
+## 3. create_request に画像を埋める
 
-専用先頭画像がある場合:
+- `images[k]`（hero 以外）の `image_id` / `image_url` を、その `image_url` のアップロード結果で置き換える。
+- オプション画像は、各オプションの元の `image_url` のアップロード結果を**同じ順番で1対1**に入れる。
+  hero（Step 1）の戻り値をオプション画像に使わない。
+- create の直前に、組み立てた引数を読み返して確かめる:
+  - `image_id` が空の画像が1つも無い
+  - `images` の枚数が指示書と同じ
+  - オプション画像の `image_id` が、同じ元 URL どうしでだけ一致し、hero の `image_id` とは違う
+  - 画像以外のフィールドが指示書の `create_request` と同じ
 
-- `images[0]`: Step 1 の戻り値。返った `image_id` / `image_url` と、存在する場合は
-  `original_url` / `frame_id` をそのまま渡す
-- `images[1..]`: gallery のアップロード結果を**先頭から全部**並べる
+## 4. create（1回だけ）
 
-専用先頭画像がない場合:
+create を呼ぶ**直前に**、result に `ok: false`、`step: "create"`、`create_sent: true` を書く
+（途中で止まっても、親が「create が送られたかもしれない」と分かるように）。
 
-- `images`: gallery のアップロード結果を先頭から全部並べる
-- gallery先頭を重複させない
+`kind` が `single` なら `create_listing`、`variation` なら `create_listing_with_variations` に、Step 3 の引数を渡す。
 
-`create_listing_with_variations`（単品は `create_listing`）へ渡す絶対規則:
+- 成功したら `item_id` と `product_id` を控えて Step 5 へ。
+- `Rate limit exceeded ... Retry after Ns.`: create は実行されていない。result に `rate_limited: true`、
+  `retry_after_seconds: N` を書いて止める。親が N 秒後に再開を指示したときだけ、**同じ引数で1回だけ**送り直す。
+- 422 `ERR_VALIDATION_FAILED`: `issues[]` をそのまま result に書いて止める。送り直さない。
+- それ以外（502、タイムアウトなど）: エラー文言を**そのまま** result に書いて止める。送り直さない。
+  作りかけが残っているかどうかの確認と判断は親が行う。
 
-- `weight` は指示書の値を**グラムのまま**渡す。kg に変換しない
-- 親 `sku` も model の `sku` も空文字 `""`。テナントの接頭辞を推測しない
-- `condition: "NEW"`
-- `submission_id` / `amazon_asin` / `product_name` は指示書の同名値
-- `product_id` が null でなければ渡す。null なら省略する
-- `item_name` / `description` / `category_id` / `brand_id` / `attributes` /
-  `logistics` / `stock` / 価格は指示書どおり
-- `dimension` の3値はキー単位でそのまま渡す
-- option名は翻訳・短縮しない
-- option画像は各 `variation.options[].image_url` のアップロード結果を同じ順序で1対1に使う
-- Step 1 の合成画像を option画像へ流用しない
+## 5. Shopee 上の実体を検証する
 
-create 直前に次を機械的に確認する。
+`get_shopee_item(provider_id, item_id)` を呼び、次を照合する。
 
-- option の image_id が互いに異なる
-- option の image_id が専用先頭画像の image_id と異なる
-- option と画像の順序が指示書と一致する
-- dimension の3キーが指示書と一致する
-- 画像枚数は、専用先頭ありなら `1 + gallery枚数`、なしなら `gallery枚数`
-
-### 4. Shopee 上の実体を公開ツールで検証する
-
-create が返した `item_id` を使い、`get_shopee_item(provider_id, item_id)` を呼ぶ。
-`shop_id` はこれらの公開ツールに渡さない。
-
-次を照合する。
-
-- item級 `weight` は指示書グラム / 1000 の KG 文字列
+- `weight`: `create_request.weight`（グラム）÷ 1000 の KG 文字列と一致
 - `item_status == "UNLIST"`
-- `item_sku` は空ではない
-- `item_name` は指示書と一致
-- dimension の3値がキー単位で一致
-- 画像枚数と比率が指示書どおり
-- 専用先頭ありなら `images[1]` が `gallery_image_urls[0]` のアップロード結果と一致
-- 専用先頭なしなら `images[0]` が `gallery_image_urls[0]` のアップロード結果と一致
+- `item_sku` が空でない
+- `item_name` が `create_request.item_name` と一致
+- `dimension` の3値がキー単位で一致
+- 画像の枚数が `images` の枚数と一致し、順番どおりにアップロード結果の画像が並んでいる
+  （hero があれば先頭が hero、その次がギャラリー先頭の素の画像）
 
-バリエーション品ではさらに `get_shopee_item_models(provider_id, item_id)` を呼ぶ。
+`kind` が `variation` なら、さらに `get_shopee_item_models(provider_id, item_id)` を呼ぶ。
 
-- option画像がアップロード結果と順序どおり1対1で一致する
-- option画像は互いに異なり、専用先頭画像とも異なる
-- `tier_index` / `original_price` / `stock` は指示書どおり
-- 各 `model_sku` は空ではない
-- model の `weight` がある場合は指示書のグラムを KG に直して照合する。省略時は item級を使う
+- 各モデルの `tier_index` / `original_price` / `stock` が `create_request.model` と一致
+- 各 `model_sku` が空でない
+- モデルに `weight` があれば、グラム ÷ 1000 と照合する。無ければ item 級の `weight` を使う（欠けているのは不一致ではない）
+- オプション画像が、アップロード結果と順番どおり1対1で一致し、hero の画像とは違う
 
-検証の正本は公開ツールが返した Shopee 実体であり、create の成功文だけではない。
+台湾（TW）では書き込みの反映が遅れることがある。TW で不一致が出たら、他の照合を終えてから1回だけ読み直す。
+それでも違えば `false` のまま報告する。**検証で `false` が出ても、自分で直さない。**
 
-### 5. 結果ファイルを書く
+## 6. 結果ファイルと最終行
 
-成功例:
+`result_path` に書く。
 
 ```json
 {
-  "store": "TH",
+  "store": "SG",
   "ok": true,
+  "step": "done",
+  "create_sent": true,
+  "rate_limited": false,
   "item_id": 123456789,
   "product_id": 98765,
-  "item_sku": "SERVER-DERIVED-SKU",
+  "item_sku": "SKU-FROM-SHOPEE",
+  "expected_parent_sku_matched": true,
   "badge": "applied",
+  "hero_image": { "image_id": "...", "image_url": "https://...", "original_url": "https://...", "frame_id": 1, "badge": "applied" },
   "verified": {
     "weight": true,
     "status_unlist": true,
@@ -207,27 +169,27 @@ create が返した `item_id` を使い、`get_shopee_item(provider_id, item_id)
     "option_image": true,
     "models": true
   },
+  "uploads": [{ "source_url": "https://...", "image_id": "...", "image_url": "https://..." }],
   "error": null
 }
 ```
 
-単品では `option_image` と `models` を null にする。1つでも false なら `ok: false` とし、
-期待値と実値を error に残す。親は全ストアの `item_sku` が一致することを別途検証するため、
-必ず実際の `item_sku` を書く。
+- 単品では `option_image` と `models` を `null` にする。オプション画像なし（`option_images: absent`）のバリエーションでは `option_image` を `null` にする。
+- 1つでも `false` があれば `ok: false` にし、`error` に期待値と実際の値を書く。
+- `item_sku` は Shopee から読んだ実際の値を書く。親が全ストアで一致するかを照らす。
+- hero が無いときは `badge` と `hero_image` を `null` にする。
 
-最終テキストは1行だけ返す。
+最終テキストは**1行だけ**返す。
 
 ```
-TH ok item=123456789 product=98765 UNLIST badge=applied
-TH FAILED verification dimension expected=... actual=...
+SG ok item=123456789 product=98765 UNLIST badge=applied
+SG FAILED create 502 failed to add base item: ...
 ```
 
-## 失敗時の規則
+## やってはいけないこと
 
-- 同じ create をそのまま再実行しない
-- `failed to add base item` は base item 作成前の失敗だが、親が原因を1つ直すまで待つ
-- `failed to init tier variation` は SKU が使われた可能性がある。`sku_risk: true` を result に書く
-- 残骸確認が必要なら `list_shopee_items(provider_id, item_status, offset, page_size)` を使う
-- `delete_item` / `set_listing_status` / `update_item` は呼ばない
-- 検証 false を自分で修正しない
-- 指示書の価格、文言、option名、カテゴリ、画像を変更しない
+- 同じ create を送り直す（例外はレート制限で拒否され、親が再開を指示したときの1回だけ）
+- `delete_item` / `set_listing_status` / `unlist_item` / `update_item` を呼ぶ（tools に無いが、あっても呼ばない）
+- 指示書の価格・文言・オプション名・カテゴリ・画像の選択を変える
+- 検証の `false` を自分で直す
+- 完了の報告に、result ファイルと違う item_id や product_id を書く
