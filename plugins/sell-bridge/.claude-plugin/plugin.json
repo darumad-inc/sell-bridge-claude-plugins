@@ -1,6 +1,6 @@
 {
   "name": "sell-bridge",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "SellBridge MCP に接続し、Shopee 出品を ASIN から UNLIST で作るスキルとサブエージェントを提供する",
   "author": { "name": "darumad-inc" },
   "repository": "https://github.com/darumad-inc/sell-bridge-claude-plugins",

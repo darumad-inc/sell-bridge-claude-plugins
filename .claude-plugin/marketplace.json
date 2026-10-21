@@ -7,7 +7,7 @@
       "name": "sell-bridge",
       "source": "./plugins/sell-bridge",
       "description": "Shopee 出品を ASIN から UNLIST で作る（価格・コンプライアンス・画像・カテゴリ検証つき）",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "category": "ecommerce"
     }
   ]
