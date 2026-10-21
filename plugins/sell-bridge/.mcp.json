@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "sell-bridge": {
+      "type": "http",
+      "url": "https://mcp.sell-bridge.com/mcp"
+    }
+  }
+}
