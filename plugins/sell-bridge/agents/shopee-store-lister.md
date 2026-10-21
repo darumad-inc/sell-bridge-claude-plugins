@@ -24,6 +24,9 @@ maxTurns: 40
 
 3. 必要な MCP ツールが未ロードなら、ToolSearch で**1回にまとめて**ロードする。
 
+**どこで止めるときも、最終行を返す前に必ず result を書く**（`ok: false`、`step`、`create_sent`、`error`）。
+書かずに止まると、親は「まだ動いている」と読んで待ち続けるか、原因を直さずに再起動する。
+
 ## 指示書
 
 ```jsonc
@@ -108,12 +111,12 @@ hero の元画像と `images[1]` は同じ URL だが、hero は Step 1 で別�
 
 ## 4. create（1回だけ）
 
-create を呼ぶ**直前に**、result に `ok: false`、`step: "create"`、`create_sent: true` を書く
+create を呼ぶ**直前に**、result に `ok: false`、`step: "create"`、`create_sent: true`、`rate_limited: false`、`retry_after_seconds: null` を書く
 （途中で止まっても、親が「create が送られたかもしれない」と分かるように）。
 
 `kind` が `single` なら `create_listing`、`variation` なら `create_listing_with_variations` に、Step 3 の引数を渡す。
 
-- 成功したら `item_id` と `product_id` を控えて Step 5 へ。
+- 成功したら `item_id` と `product_id` を**すぐ result に書き足し**（`ok` は検証が終わるまで false のまま）、Step 5 へ。
 - `Rate limit exceeded ... Retry after Ns.`: create は実行されていない。result に `rate_limited: true`、
   `retry_after_seconds: N` を書いて止める。親が N 秒後に再開を指示したときだけ、**同じ引数で1回だけ**送り直す。
 - 422 `ERR_VALIDATION_FAILED`: `issues[]` をそのまま result に書いて止める。送り直さない。
@@ -128,7 +131,7 @@ create を呼ぶ**直前に**、result に `ok: false`、`step: "create"`、`cre
 - `item_status == "UNLIST"`
 - `item_sku` が空でない
 - `item_name` が `create_request.item_name` と一致
-- `dimension` の3値がキー単位で一致
+- `dimension` は `get_shopee_item` の戻り値に無いので検証しない（result にも書かない）
 - 画像の枚数が `images` の枚数と一致し、順番どおりにアップロード結果の画像が並んでいる
   （hero があれば先頭が hero、その次がギャラリー先頭の素の画像）
 
@@ -165,7 +168,6 @@ create を呼ぶ**直前に**、result に `ok: false`、`step: "create"`、`cre
     "sku_present": true,
     "item_name": true,
     "images": true,
-    "dimension": true,
     "option_image": true,
     "models": true
   },

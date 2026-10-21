@@ -1,14 +1,14 @@
 ---
 name: shopee-listing
-description: SellBridge MCP を使い、Amazon の ASIN（またはリサーチ候補）から Shopee の出品を UNLIST（非公開）で作る。画像の目視確認、Shopee 上のストア状態の確認、コンプライアンス判定、カテゴリ・属性・配送の決定、ストアの言語での文言作成、prepare_listing の事前チェックを経て、ストアごとに出品を作り、Shopee 上の実体・在庫監視・割引の要否を確かめて報告する。1回で複数の ASIN を順に処理できる。「この ASIN を Shopee に出品して」「リサーチ候補を出品して」と頼まれたときに使う。公開（listed=true）は行わない。
-argument-hint: "<ASIN またはリサーチ候補ID> [...]"
+description: SellBridge MCP を使い、Amazon の ASIN（またはリサーチ候補）から Shopee の出品を UNLIST（非公開）で作る。画像の目視確認、Shopee 上のストア状態の確認、コンプライアンス判定、カテゴリ・属性・配送の決定、ストアの言語での文言作成、prepare_listing の事前チェックを経て、ストアごとに出品を作り、Shopee 上の実体・在庫監視・割引の要否を確かめて報告する。1つの会話で処理する ASIN は1つ。「この ASIN を Shopee に出品して」「リサーチ候補を出品して」と頼まれたときに使う。公開（listed=true）は行わない。
+argument-hint: "<ASIN またはリサーチ候補ID>"
 ---
 
 # Shopee 出品（UNLIST で作成）
 
 ## 対象: $ARGUMENTS
 
-引数は ASIN（英大文字・数字10桁）またはリサーチ候補ID（数字）を、空白区切りで1つ以上。
+引数は ASIN（英大文字・数字10桁）またはリサーチ候補ID（数字）を、空白区切りで渡されうるが、処理するのは最初の1つだけ（残りは別の会話で出す）。
 引数が無ければ、出品したい ASIN か候補IDを出品者に聞く。
 
 出品は SellBridge MCP の公開ツールだけで行える。ツールの説明には、ツールの順番や
@@ -81,8 +81,11 @@ ASIN ごとに次の値が要る。**出品者が確かめた値だけを使い�
 - リサーチ候補IDが渡されたら `get_research_candidate(id)` で値を取り、`research_candidate_id` として Step 7 で渡す。
   在庫数は `planned_listing_quantity`、個数バッジは `set_quantity`。この2つを取り違えない。
 
-`submission_id` はこのスキルが作る。`<ASIN>-<YYYYMMDD>`（8〜64文字の英数字・`_`・`-`）とし、
-全ストアで共有する。一度 create を送った ASIN では、やり直しでも**同じ値を使い続ける**。
+`submission_id` はこのスキルが作る。`<ASIN>-L1`（8〜64文字の英数字・`_`・`-`）のように**日付を入れず ASIN から決まる値**にし、
+全ストアで共有する。日付を入れると、別の日にやり直したときに二重出品のガードが効かない。
+一度 create を送った ASIN では、やり直しでも**同じ値を使い続ける**。作業フォルダが違っても、
+`shopee-listing/*/` に同じ ASIN の result や台帳があれば、先にそれを読んで出品者に伝える。
+`ERR_SUBMISSION_ALREADY_LISTED` は「作成済み」の意味である。`submission_id` を作り直して回避しない。
 
 ASIN ごとに1行の表（ASIN、仕入原価、重量、寸法、在庫、セット数、出品先）を出品者に見せて、
 **1回だけ**確認を取る。確認が取れたら、以後は「止めて出品者に聞くとき」に当たらない限り止めずに進める。
@@ -236,7 +239,7 @@ ASIN は**1つずつ順に**処理する。1つの ASIN の Step 2〜12 が終�
   "store": "SG",                       // ストアのラベル
   "provider_id": 101,
   "kind": "variation",                 // prepare の stores[].kind（single / variation）
-  "submission_id": "B0XXXXXXXX-20261021",
+  "submission_id": "B0XXXXXXXX-L1",
   "expected_parent_sku": "...",        // prepare の expected_parent_sku（照合用。作成後の SKU と違うこともある）
   "hero": {                            // create_request.images[0] に frame_id があるときだけ。無ければ null
     "tool": "compose_variation_thumbnail",   // 単品・オプション画像なしは "apply_frame_to_image"
@@ -257,7 +260,8 @@ ASIN は**1つずつ順に**処理する。1つの ASIN の Step 2〜12 が終�
 `total_count` を控える（Step 9 の照合に使う）。
 
 **3. 1店目だけを先に、同期で動かす。** `shopee-store-lister` を1体起動し、終わるのを待つ。
-result ファイルを読み、`ok: true` と `product_id` を確かめる。全ストアを同時に作ると、
+result ファイルを読み、`ok: true` と `product_id` を確かめる。
+**どちらかが欠けたら、残りのストアを起動しない。** 「作りかけの確認」（`reference/troubleshooting.md`）を先に行い、出品者に聞く。全ストアを同時に作ると、
 商品マスタ（product_id）が割れる。1店目の create が商品を作ってから、残りが同じ商品にまとまる。
 
 **4. 残りのストアは同時に最大3体。** 1つのメッセージでまとめて起動する。4ストア以上残っていれば、
@@ -283,7 +287,7 @@ result ファイルを読み、`ok: true` と `product_id` を確かめる。全
 ### Step 9. 全ストアの結果を照らし合わせる
 
 1. **起動漏れ:** 作ると決めた (submission_id, ストア) の組を先に並べ、result ファイルの組と比べる。足りない組は起動漏れ、余分な組は二重起動。
-2. **result の中身:** 全ストアで `ok: true` で、`verified` の値が `true`（単品の `option_image` / `models` だけ `null` でよい）。
+2. **result の中身:** 全ストアで `ok: true` で、`verified` に `weight` / `status_unlist` / `sku_present` / `item_name` / `images` の全キーがあり、すべて `true`（キーの欠けは不合格）。単品の `option_image` / `models` だけ `null` でよい。`dimension` は Shopee の読み取りに無いため検証しない（出品者への確認と create_request の値だけが根拠）。
    バリエーションで `option_image` が `null` なら、prepare で `option_images: absent` にしたときだけ認める。
 3. **product_id:** 全ストアで同じ。
 4. **親 SKU（`item_sku`）:** 全ストアで同じで、空でない。**割れていたら、この ASIN の残りの作成を止めてすぐ報告する**（SKU の割れは取り返しのつかない事故の前段）。
@@ -321,13 +325,16 @@ result ファイルを読み、`ok: true` と `product_id` を確かめる。全
 見送った・失敗したストアも理由付きで1行残す（後から「なぜこのストアに出ていないか」を辿れるように）。
 
 ```json
-{"timestamp": "2026-10-21T10:00:00+09:00", "submission_id": "B0XXXXXXXX-20261021", "asin": "B0XXXXXXXX",
+{"timestamp": "2026-10-21T10:00:00+09:00", "submission_id": "B0XXXXXXXX-L1", "asin": "B0XXXXXXXX",
  "store": "SG", "provider_id": 101, "status": "created_unlist", "reason": null,
  "item_id": 123456789, "product_id": 98765, "item_sku": "...", "price_local": 25.9, "currency": "SGD",
  "discount_percent": 10, "stock_monitor": "ok", "listed": false}
 ```
 
-`status` は `created_unlist` / `skipped` / `failed` のどれか。`listed` は常に `false`。
+`status` は `created_unlist` / `created_unverified` / `maybe_created` / `skipped` / `failed` のどれか。
+`created_unverified` は Shopee 上に UNLIST の item があるが検証に `false` が出たもの、`maybe_created` は
+create が届いたかもしれないもの（分かれば `item_id` を書く）。どちらも `failed` に入れず、
+Step 10（在庫監視）と Step 11（割引の To Do）の対象に含め、完了報告に「要確認」として期待値と実際の値を書く。`listed` は常に `false`。
 バリエーションで価格がモデルごとに違うときは最安値を `price_local` に入れ、幅を `reason` ではなく報告に書く。
 同じ (submission_id, ストア) の行を二重に書かない。
 
@@ -350,7 +357,7 @@ result ファイルを読み、`ok: true` と `product_id` を確かめる。全
 
 ## コンテキストと並行セッション
 
-- ASIN 1つで親のコンテキストを約40k トークン使う。**1セッションの目安は10 ASIN まで。** それより多いときはセッションを分ける。
+- ASIN 1つで親のコンテキストを約40k トークン使う。**1つの会話で出品する ASIN は1つだけ**（MCP の指示と同じ）。複数の ASIN を渡されたら、最初の1つだけを処理し、残りは新しい会話で出すよう出品者に伝える。
   途中で会話の圧縮が入ると、どの画像を外したか・どのストアを見送ったかという判断が失われ、作り直すより高くつく。
 - 重い作業（アップロード・create・検証）は必ずサブエージェントに任せ、親で近道しない。大きなツール応答は要点だけを読む。
 - **同じ ASIN を2つのセッションで同時に出品しない。** 何もロックしていないので、同じ create が二重に走り、
@@ -370,7 +377,7 @@ result ファイルを読み、`ok: true` と `product_id` を確かめる。全
 
 ## ここでは止めない
 
-- 1つのストアの見送り・失敗。他のストア・他の ASIN は続ける（ただし同じ ASIN の SKU・product_id が割れたら、その ASIN の作成は止める）
+- 1つのストアの見送り・失敗。他のストア・他の ASIN は続ける（ただし同じ ASIN の SKU・product_id が割れたら、その ASIN の作成は止める。1店目が `ok: true` かつ `product_id` ありにならないときも、残りを起動しない）
 - 「止めて出品者に聞くとき」に無い理由で見送ると決まったストア。見送って報告する
 - レート制限。待って1回送り直すだけ
 - 在庫監視の不足と割引の To Do。報告に書いて続ける
