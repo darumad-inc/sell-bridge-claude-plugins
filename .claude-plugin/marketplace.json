@@ -1,13 +1,17 @@
 {
   "name": "sell-bridge",
-  "owner": { "name": "darumad-inc" },
-  "metadata": { "description": "SellBridge 公式の Claude Code プラグイン" },
+  "owner": {
+    "name": "darumad-inc"
+  },
+  "metadata": {
+    "description": "SellBridge 公式の Claude プラグイン"
+  },
   "plugins": [
     {
       "name": "sell-bridge",
       "source": "./plugins/sell-bridge",
-      "description": "Shopee 出品を ASIN から UNLIST で作る（価格・コンプライアンス・画像・カテゴリ検証つき）",
-      "version": "0.2.0",
+      "description": "Amazon の ASIN を伝えるだけで、SellBridge につないだ Shopee の各国ストアに出品を非公開（UNLIST）で作ります。画像・コンプライアンス・カテゴリ・価格のチェックつき。",
+      "version": "0.3.0",
       "category": "ecommerce"
     }
   ]

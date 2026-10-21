@@ -1,103 +1,54 @@
 # sell-bridge-claude-plugins
 
-SellBridge 公式の Claude Code プラグインのマーケットプレイスです。
+SellBridge 公式の Claude プラグインのマーケットプレイスです。
 
-ここには `sell-bridge` プラグインが 1 つ入っています。インストールすると、次の 3 つがまとめて使えるようになります。
+ここには `sell-bridge` プラグインが 1 つ入っています（[plugins/sell-bridge](plugins/sell-bridge)）。
+SellBridge コネクタと Shopee 出品スキル `shopee-listing` がまとめて入り、claude.ai のチャット（ブラウザ・デスクトップアプリ）、Cowork、Claude Code で使えます。
+使い方と送るデータは [plugins/sell-bridge/README.md](plugins/sell-bridge/README.md) にあります。
 
-- **SellBridge MCP サーバーへの接続**（`https://mcp.sell-bridge.com/mcp`）。MCP サーバーを手で登録する必要はありません
-- **Shopee 出品スキル** `shopee-listing`（ASIN から Shopee の出品を UNLIST で作る）
-- **出品用サブエージェント** `shopee-store-lister`（1 ストア分の出品作成と、Shopee 上の実体の検証を行う）
-
-出品は常に非公開（UNLIST）で作られます。公開は SellBridge の画面から行ってください。
-
-## 必要なもの
-
-- SellBridge のアカウント。一部のツールはご契約プランによって使えない場合があります（プランごとの対応は確認中です）
-- Claude Code（Claude デスクトップアプリの「Code」タブ、または CLI）
+出品は常に非公開（UNLIST）で作られます。公開は出品者が行います。
 
 ## インストール
 
-### 1. マーケットプレイスを追加する
+### claude.ai・デスクトップアプリ（チャット・Cowork）
 
-Claude Code で次のコマンドを入力します。
+**Customize > Plugins > Add** から追加します。
+
+- マーケットプレイスとして追加する: **Add marketplace** にこのリポジトリの URL を入れ、`sell-bridge` を追加します
+- ファイルから追加する（試験用）: `plugins/sell-bridge` フォルダを zip にして **Upload plugin** で選びます
+
+```
+cd plugins && zip -r ../sell-bridge.zip sell-bridge -x '*.DS_Store'
+```
+
+追加したら、プラグインの **Connectors** タブで SellBridge に接続します。
+使うときは、チャットの入力欄で `/` を打って `sell-bridge:shopee-listing` を選び、ASIN を添えて送ります。
+
+### Claude Code
 
 ```
 /plugin marketplace add darumad-inc/sell-bridge-claude-plugins
-```
-
-### 2. プラグインをインストールする
-
-次のコマンドを入力します。
-
-```
 /plugin install sell-bridge@sell-bridge
 ```
 
-手順 1 と 2 は次の 1 行でまとめて行える場合があります（対応バージョンは確認中です。動かないときは手順 1 と 2 を順に実行してください）。
-
-```
-/plugin install sell-bridge --marketplace darumad-inc/sell-bridge-claude-plugins
-```
-
-デスクトップアプリ（Claude Desktop の Code タブ）でも入れられます。**操作の手順は確認中です。** 想定している手順は、Code タブでセッションを開き、入力欄で上の `/plugin` コマンドを同じ順に実行します。入力欄の **+** から Plugins を開く方法もありますが、画面の名称は確認中です。表示が違うときは、手順 1 と 2 のコマンドを使ってください。
-
-### 3. SellBridge にログインする
-
-インストール後、SellBridge のツールを初めて使うときに、ブラウザで SellBridge のログインと連携の許可を求められる場合があります（確認中です）。
-
-1. ブラウザが開いたら、SellBridge のアカウントでログインします。
-2. 「Claude に SellBridge へのアクセスを許可しますか」という趣旨の同意画面が出たら、内容を確かめて許可します（画面の文言は確認中です）。
-3. 「認証が完了しました」という趣旨の表示が出たら、Claude Code に戻ります。
-
-ブラウザが開かないときは、次の `/mcp` の手順を使ってください。
-
-ログイン画面が開かない場合は、`/mcp` を入力し、一覧から SellBridge のサーバーを選んで認証してください（一覧での表示名は確認中です）。
-
-## 使い方
-
-Claude Code で、出品したい ASIN（またはリサーチ候補ID）を添えて頼みます。
-
-```
-/sell-bridge:shopee-listing B0XXXXXXXX
-```
-
-「この ASIN を Shopee に出品して」と書くだけでもスキルが使われます。
-
-始める前に、ASIN ごとに次の値を用意してください。Amazon の表示値ではなく、実際に確かめた値を使います。
-
-- 販売1単位あたりの仕入原価（円）
-- 販売1単位あたりの梱包重量（グラム、実測）。バリエーションはオプションごと
-- 梱包の寸法（cm）、初期在庫、セット販売なら1セットの個数
-
-スキルは次の順で進みます。
-
-1. 出品先のストアと、Shopee 上のストアの状態を確かめる（凍結などのストアには出品しない）
-2. Amazon の商品情報と画像を取り、画像を目で確かめて、載せてはいけない画像を外す
-3. コンプライアンス、カテゴリ、必須属性、ブランド、配送方法をストアごとに決める
-4. 各ストアの言語で商品名と説明を書き、SellBridge の事前チェック（価格の計算を含む）を通す
-5. ストアごとに出品を UNLIST で作り、Shopee 上の実体を確かめる
-6. 在庫監視に乗ったかと、手で割引に入れる必要がある商品を報告する
-
-作業の記録は、Claude Code を開いているフォルダの `shopee-listing/<日付>/` に残ります。
-
-- 価格はあなたの SellBridge の手数料設定からサーバーが計算します。手数料設定が未設定だと出品は止まります
-- 1つの ASIN に数分かかります（SellBridge の書き込みは毎分20回までです）。1回の会話で出品する ASIN は1つにしてください
-- 同じ ASIN を2つの会話で同時に出品しないでください
+claude.ai のアカウントで追加したプラグインは、Claude Code にも同期されます（次のセッションの開始時）。
+使うときは `/sell-bridge:shopee-listing B0XXXXXXXX` と入力します。SellBridge への接続は `/mcp` から行えます。
 
 ## 更新
 
-プラグインは `main` ブランチの内容がそのまま配信されます。最新版にするには、マーケットプレイスの一覧を更新してからプラグインを更新します。
+プラグインは `main` ブランチの内容がそのまま配信されます。変えたら `plugin.json` と `marketplace.json` の `version` を上げてください。
+
+Claude Code で最新版にするには、次を実行してから Claude Code を再起動します。
 
 ```
 /plugin marketplace update sell-bridge
 /plugin update sell-bridge@sell-bridge
 ```
 
-更新は Claude Code を再起動すると反映されます。
+## 作りの前提
 
-## データの置き場所
-
-出品の作業ファイル（商品の仕様、価格の結果、出品の記録など）は、プラグインのフォルダではなく、作業しているフォルダに置いてください。プラグインのフォルダは更新のたびに置き換わります。
+- スキルはチャットだけで最後まで動くように書いています。チャットはサブエージェント（`agents/`）・hooks・ローカルのファイルを使えないため、どれにも頼りません（[Plugin feature support across platforms](https://claude.com/docs/plugins/platform-support)）
+- `.mcp.json` の URL は、claude.ai のコネクタ一覧に出ている SellBridge コネクタと同じにしています。両方を入れた人にも、ツールは1組だけ見えます
 
 ## ライセンス
 

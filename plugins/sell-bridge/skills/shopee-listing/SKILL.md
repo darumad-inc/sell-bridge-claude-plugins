@@ -1,40 +1,38 @@
 ---
 name: shopee-listing
-description: SellBridge MCP を使い、Amazon の ASIN（またはリサーチ候補）から Shopee の出品を UNLIST（非公開）で作る。画像の目視確認、Shopee 上のストア状態の確認、コンプライアンス判定、カテゴリ・属性・配送の決定、ストアの言語での文言作成、prepare_listing の事前チェックを経て、ストアごとに出品を作り、Shopee 上の実体・在庫監視・割引の要否を確かめて報告する。1つの会話で処理する ASIN は1つ。「この ASIN を Shopee に出品して」「リサーチ候補を出品して」と頼まれたときに使う。公開（listed=true）は行わない。
-argument-hint: "<ASIN またはリサーチ候補ID>"
+description: SellBridge につないだ Shopee のストアに、Amazon の ASIN（またはリサーチ候補）から出品を UNLIST（非公開）で作る。画像の目視確認、Shopee 上のストア状態の確認、コンプライアンス判定、カテゴリ・属性・配送の決定、ストアの言語での文言作成、prepare_listing の事前チェックを経て、ストアごとに出品を作り、Shopee 上の実体・在庫監視・割引の要否を確かめて報告する。「この ASIN を Shopee に出品して」「リサーチ候補を出品して」と頼まれたとき、ASIN と一緒に Shopee・出品・SellBridge の話が出たときに使う。1つの会話で処理する ASIN は1つ。公開（listed=true）は行わない。
 ---
 
 # Shopee 出品（UNLIST で作成）
 
-## 対象: $ARGUMENTS
+## 対象
 
-引数は ASIN（英大文字・数字10桁）またはリサーチ候補ID（数字）を、空白区切りで渡されうるが、処理するのは最初の1つだけ（残りは別の会話で出す）。
-引数が無ければ、出品したい ASIN か候補IDを出品者に聞く。
+出品する ASIN（英大文字・数字10桁）またはリサーチ候補ID（数字）は、出品者のメッセージに書かれている
+（`/sell-bridge:shopee-listing B0XXXXXXXX` のように呼ばれたときは、その後ろ: $ARGUMENTS）。
+複数書かれていても、処理するのは最初の1つだけ。残りは新しい会話で頼むよう伝える。
+どちらも書かれていなければ、出品したい ASIN か候補IDを出品者に聞く。
 
-出品は SellBridge MCP の公開ツールだけで行える。ツールの説明には、ツールの順番や
+出品は SellBridge の公開ツール（SellBridge コネクタ）だけで行える。ツールの説明には、ツールの順番や
 「`submission_id` を全ストアで共有する」「認証番号を推測しない」などの前提がすでに書いてある。
 このスキルが足すのは**判断と順番**である。どの画像を外すか、どのストアを見送るか、
-サブエージェントをどう並べるか、いつ止めて出品者に聞くか。
+どの順でストアに作るか、いつ止めて出品者に聞くか。
+
+SellBridge のツールが見えない、または認証を求めるエラーが返るときは、出品者に
+「SellBridge コネクタに接続（または再接続）してください。claude.ai の設定 → コネクタ、またはプラグインの Connectors タブから行えます」と伝えて止める。
 
 ## 絶対規則
 
-- **`set_listing_status(listed=true)` を呼ばない。** 作るのは常に UNLIST。公開は出品者が SellBridge の画面から行う。
+- **`set_listing_status(listed=true)` を呼ばない。** 作るのは常に UNLIST。公開は出品者が行う。
 - **`delete_item` を呼ばない。** `unlist_item` / `update_item` / `update_item_price` / `migrate_canonical_sku` も、出品者の確認なしには呼ばない。
-- **同じ create を同じ入力で送り直さない。** 例外はレート制限で拒否されたとき（「レート制限」の節）だけ。
-- **価格・重量・認証番号（TIS / FDA / BSMI など）・言語・カテゴリ・ブランドを推測しない。** ブランドの一致に自信が無ければ `brand_id: 0`。
+- **同じ submit を同じ入力で送り直さない。** 例外はレート制限で拒否されたとき（「レート制限」の節）だけ。
+- **重量・認証番号（TIS / FDA / BSMI など）・言語・カテゴリ・ブランドを推測しない。** 仕入原価は Step 2 の規則でだけ決める。ブランドの一致に自信が無ければ `brand_id: 0`。
 - **作成の前に必ず `prepare_listing` を通す。** `status: ready` のストアだけに作り、`stores[].create_request` は画像以外を変えずに送る。価格を書き換えない。自分で価格を計算しない。
 - **Shopee 上の状態が `NORMAL` のストアにだけ作る**（Step 0）。
-- 作業ファイルに認証情報（API キー、トークン、パスワード）を書かない。
-- 作業ファイルはプラグインのフォルダに置かない。プラグインのフォルダは更新のたびに置き換わる。
+- 会話や報告に認証情報（API キー、トークン、パスワード）を書かない。
 
-## Step 0. セッションの準備（最初に1回）
+## Step 0. 出品先のストアを決める（最初に1回）
 
-### 0-1. 作業フォルダ
-
-出品者の作業フォルダ（Claude Code を開いているフォルダ）に `shopee-listing/<YYYYMMDD>/` を作り、
-このセッションのファイルをすべてそこに置く。以下 `<work>` と書く。ファイルは**絶対パス**で扱う。
-
-### 0-2. 出品先ストアを決める
+### 0-1. 出品先ストアの候補
 
 `list_stores` を呼び、次をすべて満たすストアを候補にする。
 
@@ -42,15 +40,15 @@ argument-hint: "<ASIN またはリサーチ候補ID>"
 - `listing_language` が付いている（無いストアは言語を推測せず、出品先から外して出品者に伝える）
 - `token_status` が `valid` か `expiring`（`expiring` は出品者に「近く連携が切れる」と伝える。`expired` / `invalid` は外し、SellBridge の画面で再連携するよう伝える）
 
-候補を出品者に見せ、出品先にするストアを確かめる（指定が無ければ候補の全部）。
-**候補から外したストア（言語なし・`expired` / `invalid`）も理由付きで控え、台帳（Step 12 の `skipped` 行）と完了報告に残す。** 外したことを黙って落とさない。
+出品者が出品先を指定していれば（「PH と TH だけ」など）、その中から選ぶ。指定が無ければ候補の全部。
+**候補から外したストア（言語なし・`expired` / `invalid`）も理由付きで控え、完了報告に残す。** 外したことを黙って落とさない。
 同じリージョンにストアが複数あるときは、ラベルを `<リージョン>-<provider_id>` にして区別する。
 
-### 0-3. Shopee 上のストア状態を確かめる
+### 0-2. Shopee 上のストア状態を確かめる
 
 出品先の**全ストア**で `get_shopee_shop_info(provider_id)` を呼ぶ。
-`status` が `NORMAL` 以外のストアと、エラーが返ったストアは、**このセッションの出品先から外す**。
-台帳（`skipped` 行）と完了報告に「Shopee 上のストア状態が NORMAL でない（<status またはエラー>）」と残し、残りのストアで続ける。
+`status` が `NORMAL` 以外のストアと、エラーが返ったストアは、**この会話の出品先から外す**。
+完了報告に「Shopee 上のストア状態が NORMAL でない（<status またはエラー>）」と残し、残りのストアで続ける。
 残りが0になったら止めて出品者に伝える。
 
 なぜ必要か: `list_stores` の `status` / `token_status` は SellBridge との接続状態で、
@@ -58,54 +56,63 @@ Shopee 側の凍結や BAN は映らない。凍結中のストアに作ると�
 バリエーションを拒否し、そのストアでの親 SKU が使えなくなる。作成側の API にもガードはあるが、
 状態の取得に失敗したときは素通しし、状態を数分キャッシュするので、保証にはならない。
 
-### 0-4. テンプレートとフレーム（任意）
+### 0-3. テンプレートとフレーム（任意）
 
-- 説明文テンプレートを使う出品者なら、`list_listing_templates` / `get_listing_template` で選び、`template_id` を Step 7 で渡す。テンプレートの言語別の中身は `list_stores` の `listing_language.template_key` で引く（`code` ではない）。
-- フレームは、指定しなければ各ストアの既定フレームが使われる（無ければフレーム無し）。別のフレームを使うときだけ `list_listing_frames` で選び、`frame_id` を渡す。
+- 説明文テンプレートを使うと出品者に言われたときだけ、`list_listing_templates` / `get_listing_template` で選び、`template_id` を Step 7 で渡す。テンプレートの言語別の中身は `list_stores` の `listing_language.template_key` で引く（`code` ではない）。
+- フレームは、指定しなければ各ストアの既定フレームが使われる（無ければフレーム無し）。別のフレームを使うと言われたときだけ `list_listing_frames` で選び、`frame_id` を渡す。
 
-## Step 1. 入力をそろえて、出品者に1回だけ確かめる
+## Step 1. Amazon の情報を取る
 
-ASIN ごとに次の値が要る。**出品者が確かめた値だけを使い、Amazon（Keepa）の値で埋めない。**
+`prefill_from_asin(asin)` で商品名・説明・画像・バリエーション・価格を取る。
 
-| 項目 | 内容 |
-| --- | --- |
-| `purchase_price` | 販売1単位あたりの仕入原価（円、整数）。セット販売ならセット全体の原価 |
-| `weight_g` | 販売1単位あたりの**実測**の梱包重量（グラム、整数）。kg ではない。バリエーションはオプションごと |
-| `dimension` | 梱包の長さ・幅・高さ（cm、整数）。prefill の値は下書きとして見せ、出品者に確かめてもらう |
-| `stock` | 初期在庫。**全モデル共通の整数1つ**（モデルごとには指定できない。違う在庫にしたいときは create_request を書き換えず、出品後に出品者が SellBridge の画面で直すよう伝える） |
-| `set_quantity` | 1販売単位に入っている個数（3個セットなら 3）。セットでなければ省略 |
-| 出品先 | Step 0 のストアのうち、この ASIN を出すストア |
-
-- **価格と重量に `set_quantity` を掛けない。** どちらも、もともと販売1単位あたりの値である。
-  `set_quantity` はサムネイルの個数バッジと、セットの整合チェックにだけ使う。
-- 値が「ASIN 1個ぶん」なのか「販売1単位ぶん」なのか分からないときは、推測せず出品者に聞く。
-- リサーチ候補IDが渡されたら `get_research_candidate(id)` で値を取り、`research_candidate_id` として Step 7 で渡す。
-  在庫数は `planned_listing_quantity`、個数バッジは `set_quantity`。この2つを取り違えない。
-
-`submission_id` はこのスキルが作る。`<ASIN>-L1`（8〜64文字の英数字・`_`・`-`）のように**日付を入れず ASIN から決まる値**にし、
-全ストアで共有する。日付を入れると、別の日にやり直したときに二重出品のガードが効かない。
-一度 create を送った ASIN では、やり直しでも**同じ値を使い続ける**。作業フォルダが違っても、
-`shopee-listing/*/` に同じ ASIN の result や台帳があれば、先にそれを読んで出品者に伝える。
-`ERR_SUBMISSION_ALREADY_LISTED` は「作成済み」の意味である。`submission_id` を作り直して回避しない。
-
-ASIN ごとに1行の表（ASIN、仕入原価、重量、寸法、在庫、セット数、出品先）を出品者に見せて、
-**1回だけ**確認を取る。確認が取れたら、以後は「止めて出品者に聞くとき」に当たらない限り止めずに進める。
-
-## ASIN ごとの手順
-
-ASIN は**1つずつ順に**処理する。1つの ASIN の Step 2〜12 が終わってから次へ進む。
-
-### Step 2. Amazon の情報を取る
-
-`prefill_from_asin(asin)` で商品名・説明・画像・バリエーションを取る。
-
-- prefill の重量と価格は使わない（Step 1 の値が正）。
+- prefill の重量は使わない（Step 2 で出品者が確かめた値が正）。寸法は下書きとして Step 2 で見せる。
 - **`variations[].image` は商品写真とは限らない。** Amazon がシリーズ全体で共有する色見本のことがあり、
   別の形・別の商品が写っていることがある。オプション画像は、各オプションの ASIN を個別に
   `prefill_from_asin` して、その ASIN 自身の `images[0]` を候補にする。
 - `prefill_from_asin` は毎分10回まで（キャッシュから返る呼び出しも数える）。オプションが多いときは間隔を空ける。
 
-### Step 3. 画像を目で確かめる（省略しない）
+リサーチ候補IDが渡されたら、先に `get_research_candidate(id)` で ASIN と値を取り、その ASIN で prefill する。
+`research_candidate_id` は Step 7 で渡す。在庫数は `planned_listing_quantity`、個数バッジは `set_quantity`。この2つを取り違えない。
+
+## Step 2. 入力をそろえて、出品者に1回だけ確かめる
+
+次の値が要る。
+
+| 項目 | 内容 |
+| --- | --- |
+| `purchase_price` | 販売1単位あたりの仕入原価（円、整数）。下の「仕入原価の決め方」に従う |
+| `weight_g` | 販売1単位あたりの**実測**の梱包重量（グラム、整数）。kg ではない。バリエーションはオプションごと。**出品者に聞く**（Amazon の値で埋めない） |
+| `dimension` | 梱包の長さ・幅・高さ（cm、整数）。prefill の値は下書きとして見せ、出品者に確かめてもらう |
+| `stock` | 初期在庫。**全モデル共通の整数1つ**（モデルごとには指定できない。違う在庫にしたいときは create_request を書き換えず、出品後に出品者が SellBridge の画面で直すよう伝える）。言われなければ 1 を提案する |
+| `set_quantity` | 1販売単位に入っている個数（3個セットなら 3）。セットでなければ省略 |
+| 出品先 | Step 0 で残ったストアのうち、この ASIN を出すストア |
+
+**仕入原価の決め方:**
+
+- 出品者が仕入原価を言っていれば、それを使う（常に出品者の値が優先）。
+- 言っていなければ、Step 1 の `prefill_from_asin` の `price`（amazon.co.jp の Buy Box 価格。無ければ新品最安などの現在価格、円）を使い、
+  **どの価格を使ったか（Buy Box か、新品最安か、いくらか）を出品者に伝える**。
+- `price` は ASIN を1回買う価格である（2個入りパックなら、そのパック1つの価格）。販売1単位を作るのに同じ ASIN を複数回買うときだけ、
+  その購入回数を掛ける。**セット個数 `set_quantity` を掛けない。**
+- `price` が `null` のとき、または amazon.co.jp 以外の Amazon で引いたときは、推測せず出品者に聞く。
+- バリエーションはオプションごとに、そのオプションの ASIN の `price` で同じ規則を当てる。
+
+ほかの注意:
+
+- **価格と重量に `set_quantity` を掛けない。** どちらも、もともと販売1単位あたりの値である。
+  `set_quantity` はサムネイルの個数バッジと、セットの整合チェックにだけ使う。
+- 値が「ASIN 1個ぶん」なのか「販売1単位ぶん」なのか分からないときは、推測せず出品者に聞く。
+
+`submission_id` はこのスキルが作る。`<ASIN>-L1`（8〜64文字の英数字・`_`・`-`）のように**日付を入れず ASIN から決まる値**にし、
+全ストアで共有する。日付を入れると、別の日にやり直したときに二重出品のガードが効かない。
+一度 submit を送った ASIN では、やり直しでも**同じ値を使い続ける**。
+`ERR_SUBMISSION_ALREADY_LISTED` は「作成済み」の意味である。`submission_id` を作り直して回避しない。
+
+1行の表（ASIN、商品名、仕入原価とその出どころ、重量、寸法、在庫、セット数、出品先）を出品者に見せて、
+**1回だけ**確認を取る。重量のように出品者しか知らない値は、この確認でまとめて聞く。
+確認が取れたら、以後は「止めて出品者に聞くとき」に当たらない限り止めずに最後まで進める。
+
+## Step 3. 画像を目で確かめる（省略しない）
 
 ギャラリーとオプションの**全画像**を `preview_listing_images(image_urls)` で見る（1回20枚まで。
 応答サイズの上限を超えた分は失敗として返るので、その画像以降をもう一度呼ぶ）。
@@ -137,19 +144,19 @@ ASIN は**1つずつ順に**処理する。1つの ASIN の Step 2〜12 が終�
   理由を `absent_reason` に書く。色・柄・デザインの軸、色名を含むオプション名では使えない。
   固有の写真がどうしても取れないなら、その ASIN を見送るか出品者に聞く。
 
-### Step 4. コンプライアンスを判定する
+## Step 4. コンプライアンスを判定する
 
 `get_compliance_rules` を、英語の商品名案・ブランド・カテゴリと、出品先の
 `stores`（`shopee_<リージョン小文字>` の形。例 `shopee_sg`）で呼ぶ。
 
 - 知らないストア名は黙って捨てられ、グローバルのルールしか返らない。応答の `storeRules` に
-  出品先の全リージョンが載っていることを数えて確かめる。載っていないリージョンのストアは判断できないので**見送り**、理由を台帳と報告に残す。
+  出品先の全リージョンが載っていることを数えて確かめる。載っていないリージョンのストアは判断できないので**見送り**、理由を報告に残す。
 - `keywordMatchHighlights` は文字の一致にすぎない。商品・ブランド・カテゴリ・説明文を読んで、
   ストアごとに「可 / 不可 / 要確認」を自分で決める。
-- **「不可」と「要確認」のストアには出品しない。** 理由を台帳と報告に残す。
+- **「不可」と「要確認」のストアには出品しない。** 理由を報告に残す。
 - 3辺合計が150cmを超える梱包は越境配送できない。
 
-### Step 5. ストアごとにカテゴリ・制限・属性・ブランド・配送を決める
+## Step 5. ストアごとにカテゴリ・制限・属性・ブランド・配送を決める
 
 出品先のストアごとに次を行う。
 
@@ -170,7 +177,7 @@ ASIN は**1つずつ順に**処理する。1つの ASIN の Step 2〜12 が終�
    - `dimension_sum` が0なら3辺合計の上限は未設定。
    - 上限が全部0や `unit: UNKNOWN` のチャネルは上限が読めない。確実に収まるチャネルが他にあれば、そちらだけを残す。
 
-### Step 6. ストアの言語で文言を書く
+## Step 6. ストアの言語で文言を書く
 
 ストアごとに `item_name`・`description`、バリエーションなら軸名 `tier_name` とオプション名 `option_names` を書く。
 
@@ -183,7 +190,7 @@ ASIN は**1つずつ順に**処理する。1つの ASIN の Step 2〜12 が終�
 - `badge_axis`（サムネイルのバッジ用の分類）は `Size` か `Type` の2択。買い手には出ない。
   長さ・容量の軸も `Size`。軸名の翻訳とは別に決める。
 
-### Step 7. `prepare_listing` で事前チェックする
+## Step 7. `prepare_listing` で事前チェックする
 
 `prepare_listing` は何も書き込まないドライランで、何度呼んでもよい。次を組み立てて呼ぶ。
 
@@ -225,95 +232,115 @@ ASIN は**1つずつ順に**処理する。1つの ASIN の Step 2〜12 が終�
 
 直して呼び直しても2回続けて同じ issue が残るなら、そのストアを見送るか出品者に聞く。
 
-最後の応答を `<work>/prepare_<submission_id>.json` に保存する。そこから `expected_parent_sku` と、
-ストアごとの `computed.discount_percent` を Step 11 で使う。
+最後の応答の `expected_parent_sku` と、ストアごとの `kind`・`create_request`・`computed.discount_percent` を Step 8 以降で使う。
+会話が長くなっても取り違えないよう、`ready` のストアごとに（ラベル、provider_id、kind、販売価格、discount_percent）を一度表にまとめて出品者に見せる。
 
-### Step 8. ストアごとに作る（`shopee-store-lister` に任せる）
+## Step 8. ストアごとに作る
 
-画像のアップロード、create、Shopee 上の実体の検証は、サブエージェント `shopee-store-lister`
-（プラグインでは `sell-bridge:shopee-store-lister`）に**1ストアにつき1体**で任せる。
-親が自分でアップロードや create を呼ばない（親のコンテキストがすぐに尽きる）。
+`ready` のストアに、**1ストアずつ順に**作る。並べて同時に作らない。
 
-**1. 指示書を書く。** `ready` のストアごとに `<work>/job_<submission_id>_<ストア>.json` を書く。
-
-```jsonc
-{
-  "store": "SG",                       // ストアのラベル
-  "provider_id": 101,
-  "kind": "variation",                 // prepare の stores[].kind（single / variation）
-  "submission_id": "B0XXXXXXXX-L1",
-  "expected_parent_sku": "...",        // prepare の expected_parent_sku（照合用。作成後の SKU と違うこともある）
-  "hero": {                            // create_request.images[0] に frame_id があるときだけ。無ければ null
-    "tool": "compose_variation_thumbnail",   // 単品・オプション画像なしは "apply_frame_to_image"
-    "image_urls": ["https://..."],     // compose のときだけ。badge_axis の軸のオプションを出品順に、1オプション1つ（同じ URL も除かない）
-    "badge_axis": "Size",              // compose のときだけ
-    "set_quantity": null               // 2以上のときだけ数値
-  },
-  "create_request": { },               // prepare の stores[].create_request を1文字も変えずに入れる
-  "result_path": "/absolute/path/to/result_B0XXXXXXXX-20261021_SG.json"
-}
-```
-
-- compose のバッジの数字は `image_urls` の**長さ**である（実装は重複を除かない）。`badge_axis` が数える軸のオプション数と
-  同じ長さで、オプションの出品順に入れる。同じ URL を共有するオプションがあっても除かない
-  （除くとバッジの数が実際のオプション数より少なくなる）。先頭画像に実際に並ぶのは先頭6枚まで。
-- 価格・文言・カテゴリは create_request の中にある。指示書に別の値を書き足さない。
-
-**2. 作成前の数を控える。** 作成するストアごとに `list_shopee_items(provider_id, item_status="UNLIST", offset=0, page_size=1)` の
+**1. 作成前の数を控える。** 作成するストアごとに `list_shopee_items(provider_id, item_status="UNLIST", offset=0, page_size=1)` の
 `total_count` を控える（Step 9 の照合に使う）。
 
-**3. 1店目だけを先に、同期で動かす。** `shopee-store-lister` を1体起動し、終わるのを待つ。
-result ファイルを読み、`ok: true` と `product_id` を確かめる。
-**どちらかが欠けたら、残りのストアを起動しない。** 「作りかけの確認」（`reference/troubleshooting.md`）を先に行い、出品者に聞く。全ストアを同時に作ると、
-商品マスタ（product_id）が割れる。1店目の create が商品を作ってから、残りが同じ商品にまとまる。
+**2. 送り済みでないかを確かめる。** 各ストアで、作る直前に `get_listing_operation(provider_id, submission_id)` を呼ぶ。
+見つからない（404）なら未送信なので作ってよい。操作が返ってきたら、そのストアには**この `submission_id` で送り済み**である。submit せず、返った状態から 8-7 へ進む。
+（前の会話で途中まで進めた ASIN を頼み直されたときに、二重に作らないため。）
 
-**4. 残りのストアは同時に最大3体。** 1つのメッセージでまとめて起動する。4ストア以上残っていれば、
-3体が終わってから次を起動する。
+**3. 1店目を作り切ってから、残りに進む。** 1店目が `succeeded` で `product_id` が入るまで、2店目に進まない。
+どちらかが欠けたら、残りのストアに作らない。「作りかけの確認」（`reference/troubleshooting.md`）を先に行い、出品者に聞く。
+1店目の作成が商品マスタ（product_id）を作り、残りのストアが同じ商品にまとまる。順番を崩すと商品マスタが割れる。
 
-起動時のプロンプトに書くのは、**指示書の絶対パス**と、次の1文だけ:
+各ストアでは、次の 8-4〜8-8 を行う。**`create_request` で変えてよいのは画像の `image_id` / `image_url` だけ**
+（先頭画像は 8-4 の戻り値で丸ごと置き換える）。価格（`original_price` / `price_jpy`）、`purchase_price`、`weight`、`dimension`、文言、
+カテゴリ、属性、配送、`sku`（空文字のまま）、`submission_id`、`amazon_asin`、`product_name`、
+`option_images_absent_approval`（あればそのまま。無ければ足さない）は1文字も変えない。`weight` はグラムで入っている。kg に直さない。
 
-> 指示書の create_request は画像以外を変えずに送る。オプション画像は各オプションの image_url をアップロードした結果を同じ順で1対1に割り当て、先頭画像（hero）の戻り値をオプション画像に使わない。
+**8-4. 先頭画像（hero）。** `create_request.images[0]` に `frame_id` があるときだけ行う。
 
-規則:
+| 場合 | 呼び方 |
+| --- | --- |
+| バリエーションでオプション画像あり | `compose_variation_thumbnail`：`provider_id`、`image_urls` = `badge_axis` の軸のオプション画像 URL をオプションの出品順に1つずつ（同じ URL を共有するオプションがあっても除かない。バッジの数字はこの配列の長さ）、`variation_name` = `badge_axis`（買い手向けの軸名ではない）、`frame_id` = `images[0].frame_id`、`set_quantity` は2以上のときだけ |
+| 単品、またはオプション画像なし | `apply_frame_to_image`：`provider_id`、`image_url` = `images[0].original_url`、`frame_id` = `images[0].frame_id`、`set_quantity` は2以上のときだけ |
 
-- **起動の直前に、その (submission_id, ストア) の result ファイルが無いことを確かめる。** あれば起動しない（作成済みの可能性がある）。
-  例外は、result が `create_sent: false`（create の前で止まった）か `rate_limited: true`（レート制限で拒否された）で、
-  `reference/troubleshooting.md` に従ってやり直すと決めたときだけ。
-- **result ファイルが正。** サブエージェントの完了通知は、遅れて届く・矛盾する内容が2通届く・
-  サブエージェントが終わる前に届くことがある。通知に書かれた item_id や product_id を使わず、result ファイルを読む。
-- **result ファイルが無いことを失敗と読み替えない。** まだ動いていることが多い。それだけを理由に同じストアを再起動しない。
-  ただし完了通知が届いたのに result が無い、または長く待っても現れないときは、`create_sent` 不明として扱う。
-  `reference/troubleshooting.md` の「作りかけの確認」をしてから出品者に聞く。判断できなければそのストアは見送り、報告に出す。
-- サブエージェントが失敗を返したら、同じ指示書のまま再起動しない。エラー文言を読み、
-  `${CLAUDE_SKILL_DIR}/reference/troubleshooting.md`（このスキルのフォルダの `reference/troubleshooting.md`）に従う。
-- 422 `ERR_VALIDATION_FAILED` が返ったら、create を繰り返さない。`issues[]` の `code` は prepare と同じなので、
-  入力を直して Step 7 からやり直す。
+戻り値の `badge` が `applied` / `applied_over_product` / `not_requested` / `not_configured` なら続ける。
+`axis_unrecognised` やそれ以外（`style_unavailable`、`no_empty_corner` など）なら、**そのストアには作らずに止め**、報告に出す（`badge_axis` を自分で言い換えない）。
+続けるときは、戻り値の `image_id` / `image_url` / `original_url` / `frame_id` の**4つとも**で `images[0]` を置き換える。
 
-### Step 9. 全ストアの結果を照らし合わせる
+**8-5. 画像のアップロード。** `upload_image_url(provider_id, image_url)` で次をアップロードする。
 
-1. **起動漏れ:** 作ると決めた (submission_id, ストア) の組を先に並べ、result ファイルの組と比べる。足りない組は起動漏れ、余分な組は二重起動。
-2. **result の中身:** 全ストアで `ok: true` で、`verified` に `weight` / `status_unlist` / `sku_present` / `item_name` / `images` の全キーがあり、すべて `true`（キーの欠けは不合格）。単品の `option_image` / `models` だけ `null` でよい。`dimension` は Shopee の読み取りに無いため検証しない（出品者への確認と create_request の値だけが根拠）。
-   バリエーションで `option_image` が `null` なら、prepare で `option_images: absent` にしたときだけ認める。
-3. **product_id:** 全ストアで同じ。
-4. **親 SKU（`item_sku`）:** 全ストアで同じで、空でない。**割れていたら、この ASIN の残りの作成を止めてすぐ報告する**（SKU の割れは取り返しのつかない事故の前段）。
-   `expected_parent_sku` と違うだけなら、既存の商品の SKU を使った可能性があるので、報告に書いて続ける。
-   SKU の照合はストアが1つ終わるごとにも行い、割れたらその時点で残りの起動を止める。判断できなければ、残りのストアは見送って報告する。
-5. **Shopee 上の実在:** ストアごとに `list_shopee_items(provider_id, item_status="UNLIST", offset=0, page_size=100)` を呼ぶ。
-   作った item_id が一覧にあること、`total_count` が Step 8-2 から作った件数だけ増えていることを確かめる。
-   **ページ送りを前提にする**: 1ページ目に作った item があるとは限らない。`page_size: 100` で呼び、
-   `has_next_page` が真の間は応答の `next_offset`（自分で計算しない）で続きを読む。読み切っても見つからなければ、
-   「確認できず」として報告する（実在と書かない）。
+- `images` のうち hero 以外の全部（hero が無ければ `images[0]` から全部）の `image_url`。
+  hero の元画像と `images[1]` は同じ URL だが、`images[1]` は素の画像として別にアップロードする
+- バリエーションなら、`tier_variation[0].options[].image.image_url` の全部。**同じ URL は1回だけ**アップロードし、同じ URL のオプションには同じ結果を使う
+
+アップロードに成功した数がアップロードすべき URL の数と一致するまで、submit しない。
+応答に `image_url` が欠けていたら、その1枚だけを1回アップロードし直す。URL を自分で組み立てない。
+
+**8-6. 画像を埋めて submit（1回だけ）。**
+
+- `images[k]`（hero 以外）の `image_id` / `image_url` を、その `image_url` のアップロード結果で置き換える。
+- オプション画像は、各オプションの元の `image_url` のアップロード結果を**同じ順番で1対1**に入れる。hero の戻り値をオプション画像に使わない。
+- submit の直前に読み返す: `image_id` が空の画像が無い／`images` の枚数が `create_request` と同じ／
+  オプション画像の `image_id` は同じ元 URL どうしでだけ一致し、hero の `image_id` とは違う／
+  トップレベルの `purchase_price` がある（バリエーションは各 `model[].purchase_price` も）／`sku` と全 `model[].sku` が空文字／画像以外は `create_request` と同じ。
+
+`kind` が `variation` なら `submit_listing_with_variations`、`single` なら `submit_listing` に渡す。
+同期版の `create_listing` / `create_listing_with_variations` は使わない（タイの分割払いの下限を吸収せず、タイムアウトすると作成の成否が分からなくなる）。
+
+submit がエラーを返したとき:
+
+- **422 `ERR_VALIDATION_FAILED`** → 何も作られていない。送り直さない。`issues[].code` は prepare と同じなので、入力を直して Step 7 からやり直す
+- **409 `ERR_SUBMISSION_ALREADY_LISTED`** → そのストアには作成済み。送り直さず、8-7 で状態を読む
+- **応答が返らない・タイムアウト・5xx** → **新しい submit をしない。** 8-7 で同じキーの状態を読む
+- `Rate limit exceeded ... Retry after Ns.` → submit は実行されていない。N 秒待って、**同じ引数で1回だけ**送り直す
+- それ以外 → エラー文言をそのまま報告に書き、`reference/troubleshooting.md` に従う
+
+**8-7. 作成が終わるのを待つ。** `get_listing_operation(provider_id, submission_id)` を `retry_after_seconds` 後に読み直す。
+終端は `succeeded` / `failed` / `needs_review` だけ。
+
+- `succeeded` → `item_id` / `product_id` / `model_ids` を控えて 8-8 へ
+- `failed` / `needs_review` → `error_code` と `error_message`（Shopee の原文）を報告に書く。`item_id` が入っていれば**残骸がある**ので、それも書く。
+  `reference/troubleshooting.md` に従う
+- **10回読んでも終端にならない** → そのストアは「処理中」として報告に書き、次のストアへ進む（1店目なら残りに進まない）。
+  タイで 1000 THB 未満のモデルがあると、作成後に分割払いを外して価格を戻すまで、数分〜30分ほど `configuring` のまま待つことがある。
+  最後のストアまで終えたら、処理中のストアをもう一度読み直す
+
+**8-8. Shopee 上の実体を確かめる。** `get_shopee_item(provider_id, item_id)` を呼び、次を照合する。
+
+- `weight`: `create_request.weight`（グラム）÷ 1000 の KG 文字列と一致
+- `item_status == "UNLIST"`
+- `item_sku` が空でない
+- `item_name` が `create_request.item_name` と一致
+- 画像の枚数が `images` の枚数と一致し、順番どおりに並んでいる（hero があれば先頭が hero、その次がギャラリー先頭の素の画像）
+- バリエーションなら、オプション画像が `tier_variation` のオプションでアップロード結果と順番どおり1対1に一致し、hero の画像と違う
+
+バリエーションなら、さらに `get_shopee_item_models(provider_id, item_id)` で、各モデルの `tier_index` / `original_price` / `stock` が
+`create_request.model` と一致し、各 `model_sku` が空でないことを確かめる。
+`dimension` は Shopee の読み取りに無いので検証しない。
+
+台湾（TW）では書き込みの反映が遅れることがある。TW で不一致が出たら、他の照合を終えてから1回だけ読み直す。
+それでも違えば「要確認」として報告する。**検証で不一致が出ても、自分で直さない。**
+
+**ストアを1つ終えるごとに、親 SKU（`item_sku`）と `product_id` を、それまでのストアと比べる。** 割れていたら、
+その時点で残りのストアに作らず、すぐ出品者に報告する（SKU の割れは取り返しのつかない事故の前段）。
+`expected_parent_sku` と違うだけなら、既存の商品の SKU を使った可能性があるので、報告に書いて続ける。
+
+## Step 9. 全ストアの結果を照らし合わせる
+
+1. **作成漏れ:** 作ると決めたストアを並べ、作成・見送り・失敗のどれかに必ず入っていることを確かめる。
+2. **product_id と親 SKU:** 作成した全ストアで同じで、空でない。
+3. **Shopee 上の実在:** ストアごとに `list_shopee_items(provider_id, item_status="UNLIST", offset=0, page_size=100)` を呼ぶ。
+   作った item_id が一覧にあること、`total_count` が 8-1 から作った件数だけ増えていることを確かめる。
+   **ページ送りを前提にする**: 1ページ目に作った item があるとは限らない。`has_next_page` が真の間は応答の `next_offset`（自分で計算しない）で続きを読む。
+   読み切っても見つからなければ、「確認できず」として報告する（実在と書かない）。
    知らない新しい item_id がある・増え方が合わないときは、作りかけの出品が残っている可能性があるので報告する
-   （他のセッションや出品者の操作でも増えるので、ここでは何も消さない・作り直さない）。
+   （他の会話や出品者の操作でも増えるので、ここでは何も消さない・作り直さない）。
 
-### Step 10. 在庫監視に乗ったか確かめる（報告だけ）
+## Step 10. 在庫監視に乗ったか確かめる（報告だけ）
 
-作成後の在庫監視の自動登録は、モデルに ASIN が無い・テナントの在庫監視設定がオフ・プランの上限に達した、
-のどれかで**黙ってスキップ**される（create は成功のまま返る）。
+作成後の在庫監視の自動登録は、モデルに ASIN が無い・在庫監視の設定がオフ・プランの上限に達した、
+のどれかで**黙ってスキップ**される（作成は成功のまま返る）。
 
-1. `get_stock_monitor_status({product_ids: [<product_id>]})` で概況を見る。**どちらの呼び出しもエラーになったら**、
-   「0件」と読まず、台帳の `stock_monitor` を `unknown`（確認できず）にして報告する。0件（エラーなし）は「未登録」の疑いとして `short` にする。
-   応答に次ページがあれば続きも読む。
+1. `get_stock_monitor_status({product_ids: [<product_id>]})` で概況を見る。エラーになったら「0件」と読まず、「確認できず」として報告する。
 2. `list_stock_monitor_subscriptions({search: <親SKU>, page_size: 100})` を呼び、返った行を
    **`sku` の完全一致**と今回の `product_id` で絞ってから数える。
    出品したストアごとに、単品なら1行、バリエーションならモデルの数だけ行があること。
@@ -321,87 +348,66 @@ result ファイルを読み、`ok: true` と `product_id` を確かめる。
 3. 足りなければ、**ここで有効にしない。** 足りないストア・モデルを報告し、
    SellBridge の商品一覧から在庫監視を有効にするよう出品者に伝える（よくある原因: ASIN の無いモデル、設定オフ、プランの上限）。
 
-### Step 11. 割引の To Do を作る（報告だけ）
+## Step 11. 割引の To Do を作る（報告だけ）
 
 `prepare_listing` の `stores[].computed.discount_percent` が0より大きいストアでは、推奨価格が
 「その率の割引に入る」前提で計算されている。割引に入れないまま公開すると、想定より高い値段で並び続ける。
 
 - 該当する (ストア, item_id, モデル数, 割引率) を完了報告の To Do に並べ、出品者が手で割引に入れるよう伝える。
-- Shopee は **UNLIST のバリエーション商品**を割引に入れられない（`discount.item_status_invalid`）。それらは「公開後に入れる」と書く。
+- Shopee は **UNLIST のバリエーション商品**を割引に入れられない。それらは「公開後に入れる」と書く。
 - このスキルは割引を操作しない。
-
-### Step 12. 台帳に記録する
-
-`<work>/listing-log.jsonl` に **1行 = 1つの ASIN × 1ストア** で追記する。作成したストアだけでなく、
-見送った・失敗したストアも理由付きで1行残す（後から「なぜこのストアに出ていないか」を辿れるように）。
-
-```json
-{"timestamp": "2026-10-21T10:00:00+09:00", "submission_id": "B0XXXXXXXX-L1", "asin": "B0XXXXXXXX",
- "store": "SG", "provider_id": 101, "status": "created_unlist", "reason": null,
- "item_id": 123456789, "product_id": 98765, "item_sku": "...", "price_local": 25.9, "currency": "SGD",
- "discount_percent": 10, "stock_monitor": "ok", "listed": false}
-```
-
-`status` は `created_unlist` / `created_unverified` / `maybe_created` / `skipped` / `failed` のどれか。
-`created_unverified` は Shopee 上に UNLIST の item があるが検証に `false` が出たもの、`maybe_created` は
-create が届いたかもしれないもの（分かれば `item_id` を書く）。どちらも `failed` に入れず、
-Step 10（在庫監視）と Step 11（割引の To Do）の対象に含め、完了報告に「要確認」として期待値と実際の値を書く。`listed` は常に `false`。
-バリエーションで価格がモデルごとに違うときは最安値を `price_local` に入れ、幅を `reason` ではなく報告に書く。
-同じ (submission_id, ストア) の行を二重に書かない。
 
 ## レート制限
 
-上限はテナント全体で共有される（同じテナントの全 API キー・全接続・全セッションの合計）。
+上限は SellBridge のアカウント全体で共有される（同じアカウントの全接続・全会話の合計）。
 
 | 種類 | 上限 |
 | --- | --- |
 | 全ツール | 毎分60回 |
-| 書き込み（`upload_image_url`、`apply_frame_to_image`、`compose_variation_thumbnail`、create など） | 毎分20回 |
-| `prefill_from_asin`（Keepa） | 毎分10回 |
+| 書き込み（`upload_image_url`、`apply_frame_to_image`、`compose_variation_thumbnail`、submit など） | 毎分20回 |
+| `prefill_from_asin` | 毎分10回 |
 
-- 6ストアで ASIN 1つあたり約40回の書き込みになる。**ASIN 1つに少なくとも2〜3分かかる**と見込む。
-- サブエージェントを同時に4体以上動かさない。待ちが連鎖して全体が遅くなる。3体は**テナント単位の予算**で、
-  別のセッションも出品しているなら合計で3体以内にする。
+- 6ストアで ASIN 1つあたり約40回の書き込みになる。**ASIN 1つに少なくとも数分かかる**と、始める前に出品者に伝える。
 - `Rate limit exceeded (<window> limit). Retry after Ns.` は、**そのツールが実行されなかった**という意味。
-  N 秒待ってから、**同じ呼び出しを1回だけ**送り直す。create も同じ。同じ入力での送り直しが許されるのはこの場合だけ。
-- `Rate limit service is unavailable` は送り直さない。ランを止め、時間を置いてやり直すよう出品者に伝える。
+  N 秒待ってから、**同じ呼び出しを1回だけ**送り直す。submit も同じ。同じ入力での送り直しが許されるのはこの場合だけ。
+- `Rate limit service is unavailable` は送り直さない。止めて、時間を置いてやり直すよう出品者に伝える。
 
-## コンテキストと並行セッション
+## 会話の長さと同時出品
 
-- ASIN 1つで親のコンテキストを約40k トークン使う。**1つの会話で出品する ASIN は1つだけ**（MCP の指示と同じ）。複数の ASIN を渡されたら、最初の1つだけを処理し、残りは新しい会話で出すよう出品者に伝える。
-  途中で会話の圧縮が入ると、どの画像を外したか・どのストアを見送ったかという判断が失われ、作り直すより高くつく。
-- 重い作業（アップロード・create・検証）は必ずサブエージェントに任せ、親で近道しない。大きなツール応答は要点だけを読む。
-- **同じ ASIN を2つのセッションで同時に出品しない。** 何もロックしていないので、同じ create が二重に走り、
-  商品マスタや SKU が割れる。セッションを分けるときは ASIN を重ならないように分ける。
+- **1つの会話で出品する ASIN は1つだけ。** 複数の ASIN を頼まれたら、最初の1つだけを処理し、残りは新しい会話で頼むよう伝える。
+  会話が長くなると前半の判断（どの画像を外したか、どのストアを見送ったか）が失われ、作り直すより高くつく。
+- 大きなツール応答（prefill、カテゴリ、属性、Shopee の商品）は、必要な値だけを読む。全文を会話に書き写さない。
+- **同じ ASIN を2つの会話で同時に出品しない。** 同じ submit が二重に走り、商品マスタや SKU が割れる。
 
 ## 止めて出品者に聞くとき
 
-- Step 1 の値（仕入原価・重量・寸法・在庫・セット数）が欠けている、または何ひとつぶんの値か分からない
+- Step 2 の値（重量・寸法・在庫・セット数、`price` が無いときの仕入原価）が欠けている、または何ひとつぶんの値か分からない
 - `listing_language` の無いストアに出したいと言われた
 - コンプライアンスが「要確認」
 - 認証番号・属性・ブランド・配送の上限を確定できない
 - `FEE_SETTINGS_DEFAULT`、または `HIGH_SHIPPING_RATIO` のストアに出すかどうか
 - 色・柄の軸なのに、オプションごとの写真が取れない
-- 作成後の検証で `false` が出た、親 SKU や product_id がストア間で割れた
+- 作成後の検証で不一致が出た、親 SKU や product_id がストア間で割れた
 - 作成済みの出品を直す必要がある（直す前に必ず確認を取る）
 - 同じエラーを2回続けて切り分けられない
 
 ## ここでは止めない
 
-- 1つのストアの見送り・失敗。他のストア・他の ASIN は続ける（ただし同じ ASIN の SKU・product_id が割れたら、その ASIN の作成は止める。1店目が `ok: true` かつ `product_id` ありにならないときも、残りを起動しない）
+- 1つのストアの見送り・失敗。他のストアは続ける（ただし親 SKU・product_id が割れたら残りに作らない。1店目が `succeeded` かつ `product_id` ありにならないときも、残りに作らない）
 - 「止めて出品者に聞くとき」に無い理由で見送ると決まったストア。見送って報告する
 - レート制限。待って1回送り直すだけ
 - 在庫監視の不足と割引の To Do。報告に書いて続ける
 
 ## 完了報告
 
-最後に次をまとめて報告する。
+最後に次をまとめて報告する。出品者が後から見返せるよう、ストアごとの結果は表にする。
 
-- ASIN × ストアごとの結果: 作成なら item_id・product_id・親 SKU・価格、見送り・失敗なら理由。
-  **Step 0 で出品先から外したストア（理由付き）も、ここに必ず並べる**。`created_unverified` / `maybe_created` は「要確認」として別に挙げる
-- 画像の確認結果: ASIN ごとに見た枚数、外した枚数と理由の分類（「確認した」の一言で済ませない）
-- 照合の結果: 起動漏れ・二重起動の有無、product_id と親 SKU の一致、Shopee 上の実在（Step 9）
-- 在庫監視の結果: ASIN ごとに「全ストア×全モデル登録済み（N行）」か、足りないストア・モデル
+- ストアごとの結果: 作成なら item_id・product_id・親 SKU・価格（現地通貨）、見送り・失敗なら理由。
+  **Step 0 で出品先から外したストア（理由付き）も、ここに必ず並べる**。検証で不一致が出たもの・処理中のものは「要確認」として別に挙げる
+- 仕入原価: 使った金額と出どころ（出品者の指定 / Amazon の Buy Box / 新品最安など）
+- 画像の確認結果: 見た枚数、外した枚数と理由の分類（「確認した」の一言で済ませない）
+- 照合の結果: product_id と親 SKU の一致、Shopee 上の実在（Step 9）
+- 在庫監視の結果: 「全ストア×全モデル登録済み（N行）」か、足りないストア・モデル
 - 割引の To Do: (ストア, item_id, モデル数, 割引率)。UNLIST のバリエーション商品は「公開後に入れる」
-- 台帳のパス（`<work>/listing-log.jsonl`）と書いた行数
-- **公開（`listed=true`）は一度も行っていない**こと。公開は SellBridge の画面から行うよう伝える
+- `submission_id`（同じ ASIN を頼み直すときは、この値で送り済みかを確かめる）
+- **公開（`listed=true`）は一度も行っていない**こと。内容を確かめてから、出品者が Shopee Seller Center か SellBridge で公開するよう伝える

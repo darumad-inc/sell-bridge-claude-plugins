@@ -1,39 +1,33 @@
 # 作成で失敗したとき・作成後に直すとき
 
-`shopee-listing` スキルの Step 8 以降で、サブエージェントが失敗を返したとき、または作成済みの出品に
-誤りが見つかったときに読む。どの場合も**同じ create を同じ入力で送り直さない**（例外はレート制限だけ）。
+`shopee-listing` スキルの Step 8 以降で、作成が失敗したとき、または作成済みの出品に
+誤りが見つかったときに読む。どの場合も**同じ submit を同じ入力で送り直さない**（例外はレート制限だけ）。
 
-## まず「create が送られたか」を見る
+## まず「submit が届いたか」を見る
 
-サブエージェントの result ファイルの `step` と `create_sent` を読む。
-
-| result | 意味 | 次の行動 |
+| 状況 | 意味 | 次の行動 |
 | --- | --- | --- |
-| `create_sent: false` | create の前（画像の準備・アップロード）で止まった。Shopee に出品は作られていない | 原因を直し、同じストアのサブエージェントを起動し直してよい |
-| `create_sent: true` かつ `rate_limited: true` | create はレート制限で拒否され、実行されていない | 下の「レート制限」に従う |
-| `create_sent: true` でそれ以外の失敗 | create が Shopee まで届いた可能性がある | 下の表で文言を見分ける。分からなければ作り直さない |
+| hero の加工・画像のアップロードで止まった | submit の前で止まった。Shopee に出品は作られていない | 原因を直し、同じストアを Step 8 の 8-4 からやり直してよい |
+| submit がレート制限で拒否された | submit は実行されていない | 下の「レート制限」に従う |
+| submit がそれ以外のエラー・タイムアウトになった | submit が届いた可能性がある | `get_listing_operation(provider_id, submission_id)` で状態を読む。見つからない（404）ときだけ未送信。分からなければ作り直さない |
 
-create が届いた後のやり直し（下の表で「やり直してよい」とされた場合だけ）は、前の result を残したまま、
-指示書を書き直して `result_path` を `result_<submission_id>_<ストア>_r2.json` のような新しいパスにする。
-サブエージェントは、既存の result が「create が届いた可能性あり」を示していると止まるようになっている。
-Step 9 の照合では、そのストアの最新の result を使う。
+`get_listing_operation` が `failed` / `needs_review` を返したときは、`error_code` と `error_message` で下の表を見分ける。
+`item_id` が入っていれば Shopee 上に残骸があるので、「作りかけの確認」をしてから出品者に聞く。
 
 ## レート制限
 
 - `Rate limit exceeded (<window> limit). Retry after Ns.`: そのツールは実行されていない。
-  N 秒以上たってから、同じストアのサブエージェントに**同じ呼び出しを1回だけ**送り直させる
-  （SendMessage で同じサブエージェントを再開する。使えなければ、同じ指示書で起動し直す。
-  result ファイルに `create_sent: true` かつ `rate_limited: true` と書かれていることを先に確かめる）。
-  待つあいだは、次の ASIN の画像確認など、書き込みの無い作業を進めてよい。
+  N 秒以上たってから、**同じ呼び出しを1回だけ**送り直す。
+  待つあいだは、次のストアの準備など、書き込みの無い作業を進めてよい。
   2回目も拒否されたら、そのストアを止めて報告する。
-- `Rate limit service is unavailable`: 送り直さない。ランを止め、時間を置いてやり直すよう出品者に伝える。
+- `Rate limit service is unavailable`: 送り直さない。止めて、時間を置いてやり直すよう出品者に伝える。
 - 台湾（TW）のストアは書き込みの反映が数分遅れることがある。429 が続くときは、そのストアへの呼び出しの間隔を空ける。
 
 ## 422 が返ったとき
 
 | エラー | 意味 | 次の行動 |
 | --- | --- | --- |
-| `ERR_VALIDATION_FAILED`（`issues[]` 付き） | prepare のルール（オプション画像・オプション名・ギャラリー・仕入原価・ASIN）に反している。何も作られていない | create を繰り返さない。`issues[].code` は prepare と同じなので、入力を直して `prepare_listing` からやり直す |
+| `ERR_VALIDATION_FAILED`（`issues[]` 付き） | prepare のルール（オプション画像・オプション名・ギャラリー・仕入原価・ASIN）に反している。何も作られていない | submit を繰り返さない。`issues[].code` は prepare と同じなので、入力を直して `prepare_listing` からやり直す |
 | `PURCHASE_PRICE_INVALID` | `purchase_price` が無いか0以下。何も作られていない | `create_request` を書き換えていないか確かめる。prepare の応答には必ず入っている |
 | `ERR_VARIATION_TEXT_TOO_LONG` など文字数 | 何も作られていない | 文言を直して prepare からやり直す |
 
@@ -41,7 +35,7 @@ Step 9 の照合では、そのストアの最新の result を使う。
 
 タイのストアでクレジットカード分割払いが有効だと、Shopee は 1000 THB 未満のモデルを持つ出品を拒否する。
 SellBridge の作成処理がこれを吸収するので、このスキルは価格を嵩上げしたり分割払いを切り替えたりしない。
-それでも create が `The price must be at least 1000.00 to enable CC installment` で失敗したら、
+それでも `The price must be at least 1000.00 to enable CC installment` で失敗したら、
 送り直さず、「作りかけの確認」をしてから報告する。
 
 ## 502・タイムアウトのとき
@@ -52,16 +46,16 @@ SellBridge の作成処理がこれを吸収するので、このスキルは価
 | --- | --- | --- |
 | `failed to add base item: ...` | 親アイテムを作る**前**に Shopee が拒否した。何も作られていない | 原因を1つ直す（多いのは配送チャネルの寸法・重量オーバー。`Channel detail` に出たチャネルを外す）。`list_shopee_items(item_status="UNLIST")` で新しい item が増えていないことを確かめてから、prepare からやり直す |
 | `failed to init tier variation` など、上以外 | 親アイテムを作った**後**で失敗した可能性がある | 作り直さない。下の「作りかけの確認」をして報告する |
-| タイムアウト・応答なし（同期 create は約30秒で切れる） | create が届いたかどうか分からない | **再送しない。** 台帳は `maybe_created` にする。下の「作りかけの確認」で `list_shopee_items`（ページ送り）と `get_listing_data` を使って確かめ、結果を報告する |
+| タイムアウト・応答なし | submit が届いたかどうか分からない | **再送しない。** `get_listing_operation` で状態を読む。それでも分からなければ「要確認」として、下の「作りかけの確認」で `list_shopee_items`（ページ送り）と `get_listing_data` を使って確かめ、結果を報告する |
 
 ### 作りかけの確認
 
 1. `get_shopee_shop_info(provider_id)` で、そのストアが `NORMAL` のままか確かめる。
    `FROZEN` / `BANNED` になっていたら、そのストアをこのセッションの出品先から外す。
-2. `list_shopee_items(provider_id, item_status="UNLIST", offset=0, page_size=100)` を呼び、Step 8 で控えた
+2. `list_shopee_items(provider_id, item_status="UNLIST", offset=0, page_size=100)` を呼び、Step 8 の 8-1 で控えた
    `total_count` と比べる。1ページ目に新しい item があるとは限らない。`has_next_page` が真の間は応答の `next_offset` で続きを読む。知らない新しい item_id があれば、`get_shopee_item` で中身（親 SKU、
    バリエーションの有無）を読む。
-3. `product_id` が分かっているとき（別のストアの result など）は、`get_listing_data(product_id, provider_id)` で SellBridge に紐付いた出品があるかも見る。
+3. `product_id` が分かっているとき（先に作ったストアの結果など）は、`get_listing_data(product_id, provider_id)` で SellBridge に紐付いた出品があるかも見る。
    紐付けが無いと 404 になる。それは「SellBridge に記録が無い」という情報であり、Shopee 上に item が無い証拠ではない。
 4. 見つけた item_id と状態を報告し、どうするかを出品者に聞く。**自分で削除しない・作り直さない。**
 
