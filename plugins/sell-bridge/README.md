@@ -41,3 +41,17 @@ SellBridge でのデータの扱いは [SellBridge のプライバシーポリ�
 ## ライセンス
 
 All rights reserved. 詳しくは [LICENSE](LICENSE) を参照してください。
+
+---
+
+## English
+
+SellBridge lists Amazon Japan products on Shopee. With this plugin, a SellBridge seller gives Claude an ASIN and Claude creates **unlisted (UNLIST)** Shopee listings in the seller's connected stores. Claude never publishes a listing; the seller reviews and publishes it.
+
+**Contents:** the SellBridge connector (`https://mcp.sell-bridge.com/mcp`, OAuth sign-in with the seller's SellBridge account) and the `shopee-listing` skill.
+
+**Use it:** connect SellBridge from the plugin's Connectors tab, then type `/sell-bridge:shopee-listing B0XXXXXXXX` in a new chat, or ask "List ASIN B0XXXXXXXX on Shopee". Claude confirms the purchase price, measured package weight, size, stock, and target stores in one table, checks the images, compliance, category, attributes, and logistics for each store, writes the title and description in each store's language, runs SellBridge's server-side pre-check (which also computes the price), and creates the listings one store at a time. It ends with a report of item IDs, prices, skipped stores and reasons, items to add to a discount, and stock-monitor status.
+
+**Requirements:** a paid SellBridge plan (Basic or above) and Shopee stores connected to SellBridge. One ASIN per conversation; each ASIN takes a few minutes.
+
+**Data:** through the SellBridge connector, the plugin sends the ASIN, product titles and descriptions, image URLs, purchase price, weight, dimensions, stock, and the chosen stores, categories, and attributes to the seller's SellBridge account. SellBridge uses them to fetch the Amazon product data, compute prices, and create the listings on Shopee. The plugin itself stores nothing and contacts no other service. See the [SellBridge privacy policy](https://sell-bridge.com/privacy).
