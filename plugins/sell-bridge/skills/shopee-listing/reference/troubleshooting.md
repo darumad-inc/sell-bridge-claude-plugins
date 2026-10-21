@@ -20,7 +20,7 @@ Step 9 の照合では、そのストアの最新の result を使う。
 
 ## レート制限
 
-- `Rate limit exceeded for the <window> window. Retry after Ns.`: そのツールは実行されていない。
+- `Rate limit exceeded (<window> limit). Retry after Ns.`: そのツールは実行されていない。
   N 秒以上たってから、同じストアのサブエージェントに**同じ呼び出しを1回だけ**送り直させる
   （SendMessage で同じサブエージェントを再開する。使えなければ、同じ指示書で起動し直す。
   result ファイルに `create_sent: true` かつ `rate_limited: true` と書かれていることを先に確かめる）。
@@ -52,16 +52,18 @@ SellBridge の作成処理がこれを吸収するので、このスキルは価
 | --- | --- | --- |
 | `failed to add base item: ...` | 親アイテムを作る**前**に Shopee が拒否した。何も作られていない | 原因を1つ直す（多いのは配送チャネルの寸法・重量オーバー。`Channel detail` に出たチャネルを外す）。`list_shopee_items(item_status="UNLIST")` で新しい item が増えていないことを確かめてから、prepare からやり直す |
 | `failed to init tier variation` など、上以外 | 親アイテムを作った**後**で失敗した可能性がある | 作り直さない。下の「作りかけの確認」をして報告する |
-| タイムアウト・応答なし | create が届いたかどうか分からない | 作り直さない。下の「作りかけの確認」をして報告する |
+| タイムアウト・応答なし（同期 create は約30秒で切れる） | create が届いたかどうか分からない | **再送しない。** 台帳は `maybe_created` にする。下の「作りかけの確認」で `list_shopee_items`（ページ送り）と `get_listing_data` を使って確かめ、結果を報告する |
 
 ### 作りかけの確認
 
 1. `get_shopee_shop_info(provider_id)` で、そのストアが `NORMAL` のままか確かめる。
    `FROZEN` / `BANNED` になっていたら、そのストアをこのセッションの出品先から外す。
-2. `list_shopee_items(provider_id, item_status="UNLIST", offset=0, page_size=20)` を呼び、Step 8 で控えた
-   `total_count` と比べる。知らない新しい item_id があれば、`get_shopee_item` で中身（親 SKU、
+2. `list_shopee_items(provider_id, item_status="UNLIST", offset=0, page_size=100)` を呼び、Step 8 で控えた
+   `total_count` と比べる。1ページ目に新しい item があるとは限らない。`has_next_page` が真の間は応答の `next_offset` で続きを読む。知らない新しい item_id があれば、`get_shopee_item` で中身（親 SKU、
    バリエーションの有無）を読む。
-3. 見つけた item_id と状態を報告し、どうするかを出品者に聞く。**自分で削除しない・作り直さない。**
+3. `product_id` が分かっているとき（別のストアの result など）は、`get_listing_data(product_id, provider_id)` で SellBridge に紐付いた出品があるかも見る。
+   紐付けが無いと 404 になる。それは「SellBridge に記録が無い」という情報であり、Shopee 上に item が無い証拠ではない。
+4. 見つけた item_id と状態を報告し、どうするかを出品者に聞く。**自分で削除しない・作り直さない。**
 
 ## 作成後に直すとき
 

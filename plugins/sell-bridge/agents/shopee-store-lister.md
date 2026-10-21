@@ -120,7 +120,8 @@ create を呼ぶ**直前に**、result に `ok: false`、`step: "create"`、`cre
 - `Rate limit exceeded ... Retry after Ns.`: create は実行されていない。result に `rate_limited: true`、
   `retry_after_seconds: N` を書いて止める。親が N 秒後に再開を指示したときだけ、**同じ引数で1回だけ**送り直す。
 - 422 `ERR_VALIDATION_FAILED`: `issues[]` をそのまま result に書いて止める。送り直さない。
-- それ以外（502、タイムアウトなど）: エラー文言を**そのまま** result に書いて止める。送り直さない。
+- それ以外（502、タイムアウトなど）: エラー文言を**そのまま** result に書き（タイムアウトは `timeout: true` も書く）、止める。送り直さない。
+  作られたかどうかを自分で確かめない（親が `maybe_created` として確かめる）。
   作りかけが残っているかどうかの確認と判断は親が行う。
 
 ## 5. Shopee 上の実体を検証する
@@ -140,7 +141,9 @@ create を呼ぶ**直前に**、result に `ok: false`、`step: "create"`、`cre
 - 各モデルの `tier_index` / `original_price` / `stock` が `create_request.model` と一致
 - 各 `model_sku` が空でない
 - モデルに `weight` があれば、グラム ÷ 1000 と照合する。無ければ item 級の `weight` を使う（欠けているのは不一致ではない）
-- オプション画像が、アップロード結果と順番どおり1対1で一致し、hero の画像とは違う
+
+オプション画像は **`get_shopee_item` の応答**（`tier_variation` のオプション）で、アップロード結果と順番どおり1対1で一致し、
+hero の画像とは違うことを確かめる（`get_shopee_item_models` には無い）。
 
 台湾（TW）では書き込みの反映が遅れることがある。TW で不一致が出たら、他の照合を終えてから1回だけ読み直す。
 それでも違えば `false` のまま報告する。**検証で `false` が出ても、自分で直さない。**

@@ -39,11 +39,17 @@ Claude Code で次のコマンドを入力します。
 /plugin install sell-bridge --marketplace darumad-inc/sell-bridge-claude-plugins
 ```
 
-デスクトップアプリでは、マーケットプレイスを追加したあと **+ → Plugins** から `sell-bridge` を選んでインストールすることもできます。
+デスクトップアプリ（Claude Desktop の Code タブ）でも入れられます。**操作の手順は確認中です。** 想定している手順は、Code タブでセッションを開き、入力欄で上の `/plugin` コマンドを同じ順に実行します。入力欄の **+** から Plugins を開く方法もありますが、画面の名称は確認中です。表示が違うときは、手順 1 と 2 のコマンドを使ってください。
 
 ### 3. SellBridge にログインする
 
-インストール後、SellBridge のツールを初めて使うときに、ブラウザで SellBridge のログインと連携の許可を求められます。画面の指示に従って許可してください。
+インストール後、SellBridge のツールを初めて使うときに、ブラウザで SellBridge のログインと連携の許可を求められる場合があります（確認中です）。
+
+1. ブラウザが開いたら、SellBridge のアカウントでログインします。
+2. 「Claude に SellBridge へのアクセスを許可しますか」という趣旨の同意画面が出たら、内容を確かめて許可します（画面の文言は確認中です）。
+3. 「認証が完了しました」という趣旨の表示が出たら、Claude Code に戻ります。
+
+ブラウザが開かないときは、次の `/mcp` の手順を使ってください。
 
 ログイン画面が開かない場合は、`/mcp` を入力し、一覧から SellBridge のサーバーを選んで認証してください（一覧での表示名は確認中です）。
 
@@ -52,7 +58,7 @@ Claude Code で次のコマンドを入力します。
 Claude Code で、出品したい ASIN（またはリサーチ候補ID）を添えて頼みます。
 
 ```
-/sell-bridge:shopee-listing B0XXXXXXXX B0YYYYYYYY
+/sell-bridge:shopee-listing B0XXXXXXXX
 ```
 
 「この ASIN を Shopee に出品して」と書くだけでもスキルが使われます。
